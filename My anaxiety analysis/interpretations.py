@@ -196,7 +196,7 @@ The skill calculation makes the relative gain explicit: $1-1.295514/1.375\approx
 
 This is a modest improvement in average prediction, not a claim that anxiety is now predictable to a precise degree. No raw prediction falls outside 0–10, and I have not clipped the forecasts. The preprocessing-statistic checks confirm that medians and scales came from training rows.
 
-The full feature set beat persistence here, but persistence is only one history-based rule. I still need a tuned history-only ridge comparison before attributing the gain to habits. Section 12 will make that comparison. Nor does a point-score improvement establish statistical significance for these dependent daily errors. The 2026 model evaluation remains reserved for Section 14.
+The full feature set beat persistence here, but persistence is only one history-based rule. I still need a tuned history-only ridge comparison before attributing the gain to habits. Section 12 will make that comparison. Nor does a point-score improvement establish statistical significance for these dependent daily errors. The 2026 period is set aside and is not used for model evaluation in this notebook.
 """,
 
     "ridge_time_plot": r"""
@@ -208,7 +208,7 @@ Those observations help me understand the score, but the overlay alone cannot te
     "ridge_level_errors": r"""
 **The average improvement does not carry equally across anxiety levels.** For the **24 observed zero-rating days**, ridge overpredicts by **2.453 points on average**. For ratings **6, 7 and 8**, its mean biases are **−1.471, −2.702 and −3.037 points** respectively: it underpredicts the higher ratings. There are only **4 days rated 7** and **5 rated 8**, so I should not generalize those small groups too confidently. There are no validation targets rated 9 or 10.
 
-This pattern is consistent with forecasts that are less extreme than the outcomes. It can reflect averaging under squared-error fitting, regularization and information absent from the inputs; this plot cannot isolate a single cause. It also groups by the outcome after it is observed, so it is a retrospective error analysis, not an early-warning rule I could apply tonight. Section 14 will examine high-anxiety detection explicitly.
+This pattern is consistent with forecasts that are less extreme than the outcomes. It can reflect averaging under squared-error fitting, regularization and information absent from the inputs; this plot cannot isolate a single cause. It also groups by the outcome after it is observed, so it is a retrospective error analysis, not an early-warning rule I could apply tonight. I have not evaluated a high-anxiety warning rule in this notebook.
 """,
 
     "ridge_calibration": r"""
@@ -238,7 +238,7 @@ The intercept is the forecast at the vector of training feature means, where sta
 
 The habit weights also need that care. Sleep adequacy is **−0.0280**, while sleep quality is **+0.1474** after the other inputs are included, despite the negative pooled sleep associations in Section 5. That is a different comparison: these are jointly fitted, regularized, standardized coefficients for tomorrow's target, not pooled same-evening correlations. Their signs do not establish that better sleep raises or lowers anxiety causally. Exercise and socializing have small positive weights here, **0.0215** and **0.0436**; their practical predictive contribution still needs the planned ablations.
 
-Missingness and coverage coefficients describe the measurement pattern, not a habit intervention. For nonconstant binary indicators, a raw 0-to-1 change is not a one-standard-deviation change, as Section 7 explained. I will avoid ranking personal actions from coefficient magnitudes or signs, and examine uncertainty in Section 15 before making stronger coefficient claims.
+Missingness and coverage coefficients describe the measurement pattern, not a habit intervention. For nonconstant binary indicators, a raw 0-to-1 change is not a one-standard-deviation change, as Section 7 explained. I cannot rank personal actions from coefficient magnitudes or signs. I have not calculated coefficient uncertainty intervals here.
 """,
 
     "c4_forecasts": r"""
@@ -268,7 +268,7 @@ The socializing example also shows why counting “winning days” can mislead. 
 
 Alpha varies across outer folds because each is selected from a different earlier period. The **1.4134** nested score is not expected to equal Section 9's **1.39774** selected training-CV minimum: that earlier minimum used the same CV targets to choose alpha, whereas each outer prediction here uses an alpha selected without its scored targets. Neither training-CV number should be compared directly with the **1.2955** validation MAE from July–December 2025, because those are different dates.
 
-My answer so far is specific: **these recorded lifestyle features have not added predictive value beyond recent anxiety and calendar for this seven-day, one-day-ahead ridge setup.** I have not tested every possible representation or nonlinear interaction, and I have not estimated causal effects. The forest and its ablation in Section 13 will test whether a different model changes that predictive conclusion.
+My answer so far is specific: **these recorded lifestyle features have not added predictive value beyond recent anxiety and calendar for this seven-day, one-day-ahead ridge setup.** I have not tested every possible representation or nonlinear interaction, and I have not estimated causal effects. A different model or feature representation could give a different result; I have not tested that here.
 """,
 
     "forest_ablation": r"""

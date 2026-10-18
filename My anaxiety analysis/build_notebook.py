@@ -33,14 +33,9 @@ from interpretations import INTERPRETATIONS  # noqa: E402
 # 0. Title
 # ---------------------------------------------------------------------------
 md(r"""
-# Can My Habits Forecast Tomorrow's Anxiety?
-### An ML pipeline built on 1,380 days of my therapy journal
+# Can I Predict Tomorrow's Anxiety from My Daily Habits?
 
-**Course:** CS156 Machine Learning, Pipeline Assignment
-**Author:** Mariam Soliman
-
-> **Summary:** Using my daily journal, I compared forecasts of tomorrow's anxiety with chronological evaluation, ridge regression and random forests. On 282 observed 2026 days, ridge reduced MAE from persistence’s 1.6206 to 1.5373, while habit ablations gave small, inconsistent gains beyond recent anxiety. Coefficient uncertainty and high-day warning results show why this modest forecasting improvement does not establish causal habit effects or dependable anticipation of severe days.
-
+Using my daily journal, I explore whether my recent anxiety and daily habits help predict how anxious I will feel tomorrow. I compare simple forecasts with ridge regression using dates in chronological order. 
 """)
 
 # ---------------------------------------------------------------------------
@@ -57,7 +52,7 @@ I started it because of something my therapist told me early on: once my lifesty
 
 > **Using only what I know by tonight, can I predict how anxious I'll feel tomorrow evening? And do my sleep, exercise and socializing tell me anything that my recent anxiety doesn't already tell me?**
 
-The second part is the one I really care about. When I read back through the journal, my bad days usually come in groups, so just guessing "tomorrow will be like today" is probably already a decent forecast. If my habits matter for prediction, a model that knows about them should beat that guess. If it can't, that's still a real answer, and probably a useful one for me.
+The second part is the one I really care about. When I read back through the journal, my bad days usually come in groups, so just guessing tomorrow will be like today is probably already a decent forecast. If my habits matter for prediction, a model that knows about them should beat that guess. If it can't, that's still a real answer, and probably a useful one for me.
 
 Along the way I also want to answer three smaller questions:
 
@@ -65,28 +60,16 @@ Along the way I also want to answer three smaller questions:
 2. Do bad nights add up? Are three bad nights in a row worse than each night on its own would suggest?
 3. Could a model warn me the evening before a high-anxiety day (6/10 or more)?
 
-### What this project can and can't say
-
-The anxiety number is my own 0–10 rating at the end of the day. It isn't a clinical scale like the GAD-7, and nothing here is a diagnosis. Also, everything in this notebook is about prediction. If bad sleep predicts high anxiety, that doesn't prove bad sleep causes it. It could easily go the other way, because anxious days make it harder to sleep.
-
-### Plan for the notebook
-
-1. Load the journal as raw text, so nothing gets converted without me seeing it.
-2. Show what goes wrong when the data is loaded the default way, then clean every cell with rules I can test.
-3. Explore the data: how much anxiety carries over from day to day, and which habits move with it.
-4. Build features using only what I'd know on the evening of day *t*.
-5. Train baselines, ridge regression (sklearn and my own from-scratch version) and a random forest.
-6. Compare different feature sets, models, evaluation methods and forecast horizons.
-7. Check how stable the fitted habit coefficients are.
+The anxiety number is my own 0–10 rating at the end of the day. It isn't a clinical scale and nothing here is a diagnosis. Also, everything in this notebook is about prediction. If bad sleep predicts high anxiety, that doesn't prove bad sleep causes it. It could easily go the other way, because anxious days make it harder to sleep.
 """)
 
 # ---------------------------------------------------------------------------
 # 2. Pipeline overview and setup
 # ---------------------------------------------------------------------------
 md(r"""
-## 2. The pipeline
+## 2. How the project works
 
-Here's the whole project in one picture. The grey boxes happened before this notebook (translating and merging the journal). The blue ones are what I do here.
+The whole project in one picture. The grey boxes happened before this notebook (translating and merging the journal). The blue ones are what I do here.
 """)
 
 code(r"""
@@ -130,8 +113,8 @@ code(r"""
 def draw_pipeline():
     upstream = ["Arabic journal\n(daily entries)", "LLM translation\nto English", "Merged CSV\n1,380 daily rows"]
     in_notebook = ["Parse & audit\nevery cell", "Clean\n(range rules)", "Explore\n(persistence, links)",
-                   "Features through t\n1,365 forecasts · 17 inputs", "Split eligible forecasts\n899 / 184 / 282", "Baselines · ridge\n· random forest",
-                   "Evaluate &\nquantify uncertainty"]
+                   "Features through t\n1,365 forecasts · 17 inputs", "Split eligible forecasts\n899 / 184 / 282", "Simple baselines\nand ridge regression",
+                   "Compare errors &\ncheck which inputs help"]
     stages = [(s, "#ecebe7") for s in upstream] + [(s, "#dbe8f9") for s in in_notebook]
 
     fig, ax = plt.subplots(figsize=(14, 3.3))
@@ -154,7 +137,7 @@ def draw_pipeline():
                 ax.plot([x + w / 2, x + w / 2, x_start], [y, y_mid, y_mid], color=MUTED, lw=1.2)
                 ax.annotate("", xy=(x_start, y - 0.4), xytext=(x_start, y_mid),
                             arrowprops=dict(arrowstyle="-|>", color=MUTED, lw=1.2))
-    ax.set_title("Pipeline: from journal entries to an evening-before anxiety forecast", pad=6)
+    ax.set_title("My anxiety analysis", pad=6)
     ax.text(0.2, 0.75, "Grey: source preparation   ·   Blue: analysis performed in this notebook",
             fontsize=8.5, color=INK_2)
     plt.tight_layout()
@@ -167,7 +150,7 @@ draw_pipeline()
 md(r"""
 ### Why I used classes
 
-I use four small classes for loading, cleaning and feature construction, one for each job:
+I use four small classes for loading, cleaning and feature construction
 
 | Class | What it does |
 |---|---|
@@ -176,20 +159,20 @@ I use four small classes for loading, cleaning and feature construction, one for
 | `DataCleaner` | Applies the valid ranges from my codebook and logs every value it rejects |
 | `FeatureBuilder` | Builds the same causal inputs for each lookback and horizon; keeps targets and dates separate |
 
-I had two practical reasons for this. First, the same rules have to behave the same way on all five columns. Second, I wanted every change to the data to be logged. That way every count I report later comes from the code itself, not from me counting rows by hand.
+I had two reasons for this. First, the same rules have to behave the same way on all five columns. Second, I wanted every change to the data to be logged. That way every count I report later comes from the code itself, not from me counting rows by hand.
 """)
 
 # ---------------------------------------------------------------------------
-# 3. The data
+# 3. My journal data
 # ---------------------------------------------------------------------------
 md(r"""
-## 3. The data
+## 3. My journal data
 
 ### Where it came from
 
-I wrote the journal in Arabic, spread across several spreadsheet sheets. To work with it, I used Claude to translate the entries into English and merged the sheets into one CSV with one row per day, from **1 January 2023 to 11 October 2026**. I checked roughly 120 days against the Arabic originals and found the translated values consistent. This is a manual sample check, not a guarantee about every entry. Section 17 discloses the AI assistance; the parsing checks below verify the CSV representation rather than translation fidelity.
+I wrote the journal in Arabic, spread across several spreadsheet sheets. To work with it, I used Claude to translate the entries into English and merged the sheets into one CSV with one row per day, from 1 January 2023 to 11 October 2026. I checked roughly 120 days against the Arabic originals and found the translated values consistent. 
 
-Translating can create its own mistakes. For example, a number might come out as a word (`"seven"`) or as a label (`"Fair"`) instead of a digit. So in Section 4 I treat anything like that as a data problem to find and fix, not as something to trust automatically.
+Translating can create its own mistakes. For example, a number might come out as a word (`"seven"`) or as a label (`"Fair"`) instead of a digit. So in Section 4 I treat anything like that as a data problem to find and fix.
 
 ### What each row means
 
@@ -203,30 +186,29 @@ Each row is one day, and every variable is something I rated myself on a fixed s
 | `socializing_frequency` | عدد مرات التواصل وجهًا لوجه | count ≥ 0 | Separate in-person encounters of at least 10 minutes (I count encounters, not people) |
 | `anxiety_level` | مستوى القلق | 0–10 | My evening rating, from 0 (no anxiety) to 10 (extremely high) |
 
-For example, the row `2, 4, 1, 3, 6` means: *"I didn't get enough sleep, but the sleep itself was good. I exercised once, had three separate social encounters, and rated my evening anxiety 6/10."*
+For example, the row `2, 4, 1, 3, 6` means: *I didn't get enough sleep, but the sleep itself was good. I exercised once, had three separate social encounters, and rated my evening anxiety 6/10.*
 
-Two rules from my codebook matter a lot for cleaning. **A blank or `N/A` means I didn't record it, not zero.** And **a number outside its scale is a recording mistake.**
+Two rules from my codebook are so important for cleaning. **A blank or `N/A` means I didn't record it, not zero.** And **a number outside its scale is a recording mistake.**
 
 ### When each value was recorded
 
-The journal doesn't have timestamps, so I have to make assumptions about timing and state them clearly:
-
+My journal doesn't have exact timestamps it's just the day, so I have to make assumptions about timing.
 | Variable on date *t* | What I assume it describes |
 |---|---|
 | `sleep_adequacy`, `sleep_quality` | The night **before** day *t* |
 | `exercise_frequency`, `socializing_frequency` | What I did **during** day *t* |
 | `anxiety_level` | How I felt at the **end** of day *t* |
 
-This matters more than it looks. On the evening of day *t* I already know last night's sleep, today's exercise and socializing, and today's anxiety. What I don't know yet is how I'll sleep tonight, because that only appears in tomorrow's row. So a forecast of tomorrow's anxiety made tonight can only use today's row and the ones before it. Using tomorrow's sleep would be cheating, even though it's sitting right there in the dataset.
+On the evening of day *t* I already know last night's sleep, today's exercise and socializing, and today's anxiety. What I don't know yet is how I'll sleep tonight, because that only appears in tomorrow's row. So a forecast of tomorrow's anxiety made tonight can only use today's row and the ones before it. Using tomorrow's sleep would be cheating, even though it's sitting right there in the dataset.
 """)
 
 # ---------------------------------------------------------------------------
 # 4. Audit and cleaning
 # ---------------------------------------------------------------------------
 md(r"""
-## 4. First: what goes wrong if I load the file the normal way?
+## 4. Checking what goes wrong when I load the data
 
-Before writing any cleaning code, I wanted to see what the usual pandas approach does to this file. The obvious move is to let `pd.to_datetime` figure out the dates and let `pd.to_numeric(errors="coerce")` turn everything into numbers. The strict date conversion raises an error. Permissive mixed-format parsing and numeric coercion run, but quietly make mistakes.
+Before writing any cleaning code, I wanted to see what the usual pandas approach does to my file. The clear move is to let `pd.to_datetime` figure out the dates and let `pd.to_numeric(errors="coerce")` turn everything into numbers. The strict date conversion raises an error. Permissive mixed-format parsing and numeric coercion run, but quietly make mistakes.
 """)
 
 code(r"""
@@ -261,7 +243,7 @@ for col, values in lost.items():
 interp("naive")
 
 md(r"""
-### The parser: one rule for each problem
+### Writing rules to read the messy entries
 
 `DailyLogParser` has a named rule for each kind of messy value I found in the file. Every cell it parses keeps the name of the rule that handled it, so the audit table below comes straight from the parser.
 
@@ -352,7 +334,7 @@ print(f"All {len(checks)} parser checks passed.")
 """)
 
 md(r"""
-### Loading every cell through the parser
+### Loading the data with my parser
 
 `DailyLogLoader` reads the file with `dtype=str` and `keep_default_na=False`, so pandas doesn't convert anything by itself. Even `"N/A"` comes in as text, which means I can count it. After parsing, the loader checks that the dates are unique, in order, and cover every single day. If any date was misread, this check fails.
 """)
@@ -402,7 +384,7 @@ parsed.head()
 """)
 
 md(r"""
-### Which rule handled each cell
+### Checking how the entries were read
 
 Each row of this table is a column from my journal, and each number is how many cells a rule handled. The non-integer rules show what was recovered or normalized. Padded integers already survive numeric coercion; not every normalization recovers a lost value.
 """)
@@ -431,7 +413,7 @@ display(recovered.assign(date=recovered["date"].dt.date)
 interp("audit")
 
 md(r"""
-### Values that parse fine but can't be true
+### Checking for values outside the scales
 
 Parsing turns text into numbers, but it can't tell me whether a number makes sense. My codebook defines each scale and says anything outside it is a recording mistake, so `DataCleaner` marks those values as missing.
 
@@ -484,9 +466,9 @@ display(cleaner.rejected)
 interp("ranges")
 
 md(r"""
-### How many values survive each step
+### How much data is left after cleaning?
 
-This is my version of the chess example's "games left after each filter", except that I count cells instead of rows. I never drop a whole day, because a day with one bad value still has four good ones.
+I count how many recorded values remain after each cleaning step. I never drop a whole day, because a day with one bad value still has four good ones.
 """)
 
 code(r"""
@@ -522,7 +504,7 @@ interp("summary")
 # 5. Exploration
 # ---------------------------------------------------------------------------
 md(r"""
-## 5. Exploring the data
+## 5. Taking a first look at the data
 
 For each figure I'll say which question it answers, what it shows, and what I'm changing in my plan because of it.
 
@@ -568,7 +550,7 @@ display(by_year)
 interp("timeseries")
 
 md(r"""
-### 5.2 How much does anxiety carry over from one day to the next?
+### 5.2 Does yesterday's anxiety help predict today's?
 
 To measure this I use **autocorrelation**. At lag *k*, it's the correlation between my anxiety on a given day and my anxiety *k* days earlier:
 
@@ -601,7 +583,7 @@ print("Observed pairs:", {k: int((anx.notna() & anx.shift(k).notna()).sum()) for
 interp("acf")
 
 md(r"""
-### 5.3 What do the values look like?
+### 5.3 How often did I record each rating?
 
 How spread out a variable is limits what a model can learn from it. If something has the same value almost every day, it can't predict much, even if it matters a lot in real life.
 """)
@@ -636,7 +618,7 @@ interp("distributions")
 md(r"""
 <a id="section-54"></a>
 
-### 5.4 Do habits tell me about tomorrow, or mainly about the same evening?
+### 5.4 Are my habits related to anxiety today or tomorrow?
 
 A strong same-evening relationship is not enough to answer my forecasting question. I first compare average anxiety at each habit level, then check whether a next-evening association remains when comparing days with the same current anxiety rating.
 
@@ -832,13 +814,13 @@ interp("weekday")
 md(r"""
 <a id="section-6"></a>
 
-## 6. Feature design and its choices
+## 6. Choosing the model's inputs
 
 So far, each row has described one day. A model needs a different kind of row: **what I know tonight, paired with the anxiety rating I want to predict tomorrow**. Getting this alignment right matters more than choosing a complicated model. A model can look excellent if I accidentally give it information that would only arrive after the forecast.
 
 I will build the features myself before using any modeling library. The calculations below do not learn parameters from the data. Imputation, standardization and model fitting come later, inside the training folds.
 
-### 6.1 Which evening does a row belong to?
+### 6.1 Matching today's inputs to tomorrow's anxiety
 
 I index a forecast by its **issue date** $t$, the evening when it is made. Its **target date** is $t+h$, where $h$ is the number of calendar days ahead:
 
@@ -882,7 +864,7 @@ plt.show()
 """)
 
 md(r"""
-### 6.2 What should the model remember?
+### 6.2 How much past information should I use?
 
 I want the features to correspond to questions I can explain:
 
@@ -916,7 +898,7 @@ The lookback argument $k$ sets the maximum rolling window. I include the standar
 """)
 
 md(r"""
-### 6.3 A cumulative sleep-shortfall score
+### 6.3 Keeping track of several nights of poor sleep
 
 A rolling mean treats all days inside a window equally and forgets a day as soon as it falls outside. I also want a candidate that gives a low sleep-adequacy rating some weight for several subsequent days. I construct:
 
@@ -984,7 +966,7 @@ display(pd.DataFrame({"adequacy": [1, 2, np.nan, 4],
 interp("shortfall_example")
 
 md(r"""
-### 6.4 Build the features once, with explicit rules
+### 6.4 Building the input features
 
 `FeatureBuilder(lookback, horizon, sleep_decay)` applies those definitions to the intact daily calendar. I keep its work separate from fitting a model:
 
@@ -1065,7 +1047,7 @@ class FeatureBuilder:
 """)
 
 md(r"""
-### Data dictionary for the starting feature set
+### What each input feature means
 
 The names below are the actual columns used in the code. The core nine correspond to the underbraced equation. Supporting indicators make missingness visible without filling the measurements or outcomes.
 
@@ -1107,7 +1089,7 @@ display(all_features.loc[[example_date], ["anxiety_today", "anxiety_mean_3d", "a
 """)
 
 md(r"""
-### 6.5 Check the timing and arithmetic before trusting the matrix
+### 6.5 Checking the feature dates and calculations
 
 I want more than a comment saying "no leakage." These checks target mistakes that would change the forecasting task:
 
@@ -1204,7 +1186,7 @@ print("future-change invariance, prefix reproducibility, and response to an avai
 interp("feature_checks")
 
 md(r"""
-### 6.6 Which rows can become training or evaluation examples?
+### 6.6 Which days can I use for the models?
 
 The builder returned every issue date, including dates with missing predictors. I now apply a separate eligibility rule:
 
@@ -1258,7 +1240,7 @@ interp("feature_rows")
 
 
 md(r"""
-### 6.7 Choosing $k$: a question for Section 11
+### 6.7 Choosing how many days to look back (Section 11)
 
 Seven days is an understandable starting point: it gives me today's rating, a short three-day view and a full week. It is not a result. A longer window might smooth noise, but it could also blur a sudden change; a shorter window may react faster but rely on fewer observations.
 
@@ -1287,7 +1269,7 @@ print("Construction counts only. Section 11 will compare validation errors.")
 md(r"""
 <a id="section-7"></a>
 
-## 7. Model 1 setup: why ridge regression?
+## 7. Starting with ridge regression
 
 I now have one row for each eligible forecast: what I know tonight, paired with tomorrow evening's anxiety. The next question is how to turn that row into a prediction.
 
@@ -1295,7 +1277,7 @@ I want to start with a model whose calculation I can follow. Ridge regression gi
 
 Three questions guide the math here: how do I calculate a forecast, how do I learn the weights, and how do I judge the result? The **prediction rule** tells me how a row becomes a forecast. The **training objective** tells me which weights the model prefers. **Evaluation on later dates** tells me whether those learned weights are useful. A small training objective alone cannot answer my original question.
 
-### 7.1 Why this model comes first
+### 7.1 Why I chose ridge first
 
 There is a reason to use ridge rather than ordinary least squares here. Today's anxiety, its three-day average and its seven-day average overlap. Sleep adequacy, sleep quality and accumulated sleep shortfall may also carry overlapping information. With related predictors, several combinations of weights can produce similar predictions. Large weights that cancel each other are hard to interpret and may be sensitive to small changes in the training period.
 
@@ -1305,11 +1287,11 @@ For example, if today's rating and its recent average usually rise together, the
 
 This is the **bias–variance tradeoff** in this setting. Shrinkage can move the fitted relationship away from the best unpenalized training fit, introducing bias, while making the coefficients less sensitive to the particular training observations. That reduced sensitivity can help on later dates. If I shrink too strongly, however, I can lose useful information and underfit. The validation results will decide whether the tradeoff helps this journal.
 
-This is also a useful first model because it makes a clear assumption: each feature contributes additively, with the same slope across its range. Moving sleep adequacy from 1 to 2 has the same modeled contribution as moving it from 4 to 5. The ratings are ordered categories, so that equal-step assumption is an approximation. A random forest later gives me a way to test thresholds and interactions that this linear model cannot express unless I add them as features.
+This is also a useful first model because it makes a clear assumption: each feature contributes additively, with the same slope across its range. Moving sleep adequacy from 1 to 2 has the same modeled contribution as moving it from 4 to 5. The ratings are ordered categories, so that equal-step assumption is an approximation. Thresholds and interactions would need additional features or a different model; I have not tested those here.
 """)
 
 md(r"""
-### 7.2 What the symbols mean in my notebook
+### 7.2 What the symbols mean
 
 Section 6 produced **1,365 eligible forecasts with 17 candidate input columns**. That is the entire eligible pool, not the size of the training set. I will assign dates to training, validation and final evaluation in Section 8.
 
@@ -1338,7 +1320,7 @@ print("No training dates, preprocessing parameters or coefficients have been fit
 """)
 
 md(r"""
-### 7.3 From one evening's inputs to a forecast
+### 7.3 How the inputs become a prediction
 
 For one forecast, ridge uses a weighted sum:
 
@@ -1397,7 +1379,7 @@ A linear forecast can fall outside 0–10. I will initially evaluate its raw pre
 """)
 
 md(r"""
-### 7.4 What does “learning the weights” mean?
+### 7.4 How the model learns its weights
 
 For each training row, the residual is $y_t-\widehat y_t$. Squaring it gives larger errors more influence and prevents positive and negative errors from canceling. Averaging those squared errors gives the data-fit part of the objective. Ridge adds a second part:
 
@@ -1506,7 +1488,7 @@ plt.show()
 interp("ridge_setup_demo")
 
 md(r"""
-### 7.5 One convention to keep consistent
+### 7.5 Keeping the ridge penalty consistent
 
 My objective divides the squared-error term by $n$. Scikit-learn's `Ridge` instead writes its objective as
 
@@ -1526,7 +1508,7 @@ Using the same numeric alpha in both implementations would therefore give differ
 
 This convention follows the objective documented by the installed scikit-learn `Ridge` implementation. [Reference: Ridge documentation](https://scikit-learn.org/stable/modules/generated/sklearn.linear_model.Ridge.html).
 
-### 7.6 A preview of the Bayesian interpretation
+### 7.6 The link to Bayesian regression
 
 There is another way to arrive at the same penalty. Suppose the training targets follow a linear model with independent Gaussian errors, $\mathbf y\mid X,w,b\sim\mathcal N(Xw+b\mathbf 1_n,\sigma^2I)$, and suppose the standardized-feature weights have a zero-centered Gaussian prior, $w\sim\mathcal N(0,\tau^2I)$. I leave the intercept unpenalized, corresponding to a flat prior on $b$.
 
@@ -1548,11 +1530,11 @@ $$\alpha=\frac{\sigma^2}{n\tau^2},\qquad \alpha_{\mathrm{sklearn}}=\frac{\sigma^
 
 For fixed $n$ and residual variance, a smaller $\tau^2$ means a tighter prior and a stronger penalty. For fixed prior variance, larger assumed residual noise gives the observations less influence relative to the prior. These relationships explain the ratio; they do not estimate either variance from my data at this stage.
 
-So ridge is a **maximum a posteriori (MAP)** estimate under these assumptions: a smaller prior variance expresses a stronger preference for weights near zero. It does not mean that ridge has proved the assumptions true. My anxiety ratings are bounded, and dependence between days could remain even after conditioning on the features. Section 15 will examine the full posterior and compare its uncertainty with a moving-block bootstrap, rather than treating the MAP weights as certainty.
+So ridge is a **maximum a posteriori (MAP)** estimate under these assumptions: a smaller prior variance expresses a stronger preference for weights near zero. It does not mean that ridge has proved the assumptions true. My anxiety ratings are bounded, and dependence between days could remain even after conditioning on the features. The MAP weights alone do not tell me how uncertain the coefficients are.
 
-MAP selects the parameter values where the posterior density is largest. It is a point estimate, so it does not by itself give intervals or probabilities about a coefficient's sign. Also, the independence assumption here concerns the **remaining errors conditional on the inputs**. Including yesterday's anxiety does not automatically make those errors independent. I can fit ridge without claiming this Gaussian model is literally true; the exact Bayesian uncertainty calculation will rely on stronger assumptions than the prediction rule alone.
+MAP selects the parameter values where the posterior density is largest. It is a point estimate, so it does not by itself give intervals or probabilities about a coefficient's sign. Also, the independence assumption here concerns the **remaining errors conditional on the inputs**. Including yesterday's anxiety does not automatically make those errors independent. I can fit ridge without claiming this Gaussian model is literally true; a Bayesian uncertainty calculation would need stronger assumptions than the prediction rule alone.
 
-### 7.7 What is ready, and what comes next?
+### 7.7 What I need before fitting the model
 
 I have defined the prediction rule, the objective and the meaning of regularization. The small example checked the arithmetic; it did not estimate how well ridge forecasts my anxiety. I have not fitted an imputer, scaler or model on the eligible pool.
 
@@ -1564,18 +1546,16 @@ The practical question I will carry forward is this: **after accounting for rece
 # ---------------------------------------------------------------------------
 # 8. Chronological evaluation, baselines and the C3 diagnostic
 # ---------------------------------------------------------------------------
-code("")  # Preserve the blank code cell added directly in the notebook.
-
 md(r"""
 <a id="section-8"></a>
 
-## 8. Split, baselines, and the leakage demonstration
+## 8. Splitting the data and trying simple forecasts
 
 I have defined what ridge will learn. Before I let it learn anything, I need to decide what counts as a fair forecast. My question is about tomorrow, so the model must face later observations using information available at the time. A random collection of held-out rows would answer a different question.
 
-This section establishes the dates and the forecasts ridge must compete against. I also run **comparison C3**, a deliberately shuffled-versus-chronological validation experiment, entirely inside the training period. Its purpose is to measure how the evaluation procedure changes the result, not to select a model from the final evaluation period.
+This section establishes the dates and the forecasts ridge must compete against. I also run a shuffled-date comparison, a deliberately shuffled-versus-chronological validation experiment, entirely inside the training period. Its purpose is to measure how the evaluation procedure changes the result, not to select a model from the final evaluation period.
 
-### 8.1 Split by the date I am predicting
+### 8.1 Splitting by the date I want to predict
 
 Each eligible row has two dates: the evening when I issue the forecast, and the following evening when I observe its target. I assign the row using its **target date**:
 
@@ -1583,13 +1563,13 @@ Each eligible row has two dates: the evening when I issue the forecast, and the 
 |---|---|---|
 | Training | Through 30 June 2025 | Learn preprocessing and coefficients; run internal time-series CV |
 | Validation | 1 July–31 December 2025 | Compare development choices and check baseline performance |
-| Final evaluation | 1 January 2026 onward | Compare the frozen choices in Section 14 |
+| Reserved period | 1 January 2026 onward | Set aside from the model comparisons in this notebook |
 
 For example, the forecast issued on **30 June 2025** predicts **1 July 2025**, so it belongs to validation. The training target observed on 30 June is already available by that evening. This boundary is consistent with my “using what I know tonight” question.
 
 I am keeping the dates fixed rather than choosing a split that happens to give favorable scores. The counts below come from the cleaned, aligned examples, so they can differ from the raw number of calendar days in each period.
 
-**An important limitation:** I already explored the 2026 measurements in Section 5. The final period is reserved from model fitting, tuning and scoring here, but it is not completely unseen data. I will disclose that earlier exploration when interpreting the final results.
+**An important limitation:** I already explored the 2026 measurements in Section 5. The final period is reserved from model fitting, tuning and scoring here, but it is not completely unseen data. Any future evaluation on this period would need to acknowledge that earlier exploration.
 """)
 
 code(r"""
@@ -1661,7 +1641,7 @@ plt.show()
 interp("split_results")
 
 md(r"""
-### 8.2 What happens during a held-out period?
+### 8.2 Making predictions during validation and testing
 
 I evaluate **successive one-day-ahead forecasts**. At each evening $t$, the day's observed measurements become available, and I predict $a_{t+1}$. When tomorrow arrives, its observed rating may become history for the next forecast. Using that newly available history is legitimate: it matches how I would use the notebook in practice.
 
@@ -1673,7 +1653,7 @@ I use no extra gap for this **one-day horizon and evening-after-observation timi
 """)
 
 md(r"""
-### 8.3 Three simple forecasts I need to beat
+### 8.3 Three simple forecasts to compare against
 
 A complicated model is only useful if it improves on a reasonable simple rule. I use three baselines:
 
@@ -1735,7 +1715,7 @@ print("Baseline alignment, missing-current fallback and future-prefix checks pas
 """)
 
 md(r"""
-### 8.4 How I will score a forecast
+### 8.4 How I measure prediction errors
 
 For $m$ held-out forecasts, let $e_i=y_i-\widehat y_i$. I report
 
@@ -1819,7 +1799,7 @@ assert validation_baseline_scores.loc["Persistence", "Skill vs persistence"] == 
 interp("validation_baselines")
 
 md(r"""
-### 8.5 C3: what changes when I shuffle time?
+### 8.5 What happens if I shuffle the dates?
 
 The autocorrelation in Section 5 made a random split questionable. Here I measure the difference rather than assume it must favor one method.
 
@@ -2006,7 +1986,7 @@ Each row's counts come from the actual indices used to fit and score that fold. 
 
 The shuffled panel's blue/orange interleaving shows that fitting can use dates later than a scored forecast. The expanding panel preserves the direction of forecasting. The plot shows **which observations are used**, not how accurate the predictions are or how much shuffling changes the score; that is measured below. Preprocessing is fitted separately within every fold, as required by Section 7.
 
-### 8.6 Compare scores on the same forecast dates
+### 8.6 Comparing models on the same dates
 
 Shuffled CV produces one out-of-fold prediction for every training-period row. Expanding CV needs an initial fitting period, so it cannot score the earliest rows. Comparing their unfiltered averages would mix different evaluation dates.
 
@@ -2025,7 +2005,7 @@ c3_scorecard = pd.DataFrame({
     scheme: regression_scores(common_y, cv_predictions.loc[common_cv_dates, scheme], common_persistence)
     for scheme in cv_splits
 }).T
-print("C3: ridge scores on common dates (same temporal persistence reference for skill)")
+print("Ridge scores on common dates (same temporal persistence reference for skill)")
 display(c3_scorecard.round(4))
 
 timing_diagnostics = pd.DataFrame({
@@ -2051,13 +2031,13 @@ print("Positive means shuffled CV looks better; negative means temporal CV looks
 interp("c3_results")
 
 md(r"""
-### 8.7 The evaluation rules I will carry forward
+### 8.7 Rules for the model comparisons
 
 I now have a fixed chronological split and explicit baseline rules. Preprocessing and coefficient fitting happen inside the training portion of each comparison. Held-out history is used only after it becomes available, and the 2026 partition has received no model predictions or scores in this section.
 
-I will use expanding-window CV for model development because it matches the direction of the actual forecasting task. The shuffled result remains a diagnostic; it is not a score I will use to claim future performance. The baseline results set a concrete bar: ridge and the forest must justify their added complexity on comparable dates, especially against persistence.
+I will use expanding-window CV for model development because it matches the direction of the actual forecasting task. The shuffled result remains a diagnostic; it is not a score I will use to claim future performance. The baseline results set a concrete bar: ridge must justify its added complexity on comparable dates, especially against persistence.
 
-**Next, Section 9:** tune ridge with a training-only time-series CV pipeline, evaluate the chosen training fit on validation, and introduce `ModelEvaluator`. Section 14 will handle the final model scorecard after the development choices are fixed. Since 2026 was already explored descriptively, I will keep that limitation visible in the final discussion.
+**Next, Section 9:** tune ridge with a training-only time-series CV pipeline, evaluate the chosen training fit on validation, and introduce `ModelEvaluator`. This notebook ends with the development comparisons; it does not report model scores on the reserved 2026 period. The earlier descriptive exploration of 2026 remains a limitation for any future evaluation.
 """)
 
 # ---------------------------------------------------------------------------
@@ -2066,7 +2046,7 @@ I will use expanding-window CV for model development because it matches the dire
 md(r"""
 <a id="section-9"></a>
 
-## 9. Ridge with scikit-learn: tuning and evaluation
+## 9. Fitting and tuning ridge with scikit-learn
 
 Section 8 gave me an evaluation procedure and a useful benchmark. Now I can ask whether a properly tuned ridge model improves on it. I will choose the penalty using only the training period, fit the chosen pipeline on all 899 training examples, and then examine its forecasts for July–December 2025. The 2026 rows remain outside this work.
 
@@ -2081,7 +2061,7 @@ Here is what each stage learns. The coefficients $w$ and intercept $b$ are **mod
 
 The 745 internal CV forecasts belong to the training partition; they are not an additional dataset outside it. The first 154 training examples supply the initial fitting period and receive no expanding-CV prediction. I do not replace those absent predictions with fitted values, because that would mix training error with held-out error.
 
-### 9.1 Preprocessing belongs inside every fit
+### 9.1 Preparing the data separately for each fit
 
 The order is **median imputation → standardization → ridge**. Each CV fold gets a fresh pipeline. Its medians, feature means, feature scales and coefficients are learned from that fold's fitting rows. Its validation rows are only transformed and predicted.
 
@@ -2089,7 +2069,7 @@ I keep Section 7's objective, $J=\mathrm{MSE}+\alpha\lVert w\rVert^2$. Since sci
 
 `keep_empty_features=True` keeps the feature layout stable if an early fitting period has an entirely missing column; scikit-learn then supplies zero for that column before scaling. The missingness and coverage columns from Section 6 remain in the input. This is a numerical fallback, not a claim that an unobserved measurement equals zero.
 
-#### What the pipeline actually learns
+#### What gets learned from the training data
 
 For fold $f$ and feature $j$, let $m_{fj}$ be the median of the observed fitting values. An absent predictor is replaced with this fitted median. After imputation, the scaler learns the fitting mean $\mu_{fj}$ and standard deviation $s_{fj}$, using divisor $n_f$ (`ddof=0`) as in `StandardScaler`. It transforms a value $v_{ij}$ into
 
@@ -2099,7 +2079,7 @@ A constant feature uses scale 1. The exact same $m_{fj},\mu_{fj},s_{fj}$ are use
 
 For example, a fitting median for sleep quality is a rule learned from earlier observations, not an estimate recomputed from the future block. This distinction is why fitting one scaler on all 899 rows **before** CV would be wrong: the early fold would already know something about the distribution of its later validation inputs. Putting preprocessing inside the fold prevents that information from entering the fit. The causal feature construction in Section 6 and the chronological split in Section 8 address different parts of the same timing requirement.
 
-#### How the tuning calculation works
+#### How I choose the penalty
 
 Write $F_f$ for the fitting indices and $V_f$ for the validation indices in fold $f$. For a candidate alpha, that fold solves
 
@@ -2117,7 +2097,7 @@ Here $\mathcal A$ is the grid of 17 positive candidates from $10^{-6}$ to $10^2$
 
 The training objective still uses squared error; the selection rule uses MAE because an average absolute miss in rating points is easy to interpret for my question. I am choosing among squared-error-trained models, not claiming to have trained ridge by minimizing absolute error. RMSE remains a secondary diagnostic rather than a second selection rule I switch to after seeing the results.
 
-#### Following the code
+#### How the code works
 
 `make_ridge_pipeline` creates an unfitted pipeline. `pipeline.fit` learns its preprocessing and regression parameters from `fit_x` and the matching targets. `pipeline.predict(score_x)` applies those already fitted transformations and returns forecasts without learning from the scored outcomes. The `oof` Series stores them against their issue dates, so the target comparisons stay aligned.
 
@@ -2186,9 +2166,9 @@ plt.show()
 interp("ridge_tuning")
 
 md(r"""
-### 9.2 A reusable evaluator, with clearly defined errors
+### 9.2 Writing a function to compare prediction errors
 
-I need the same scoring rules for ridge, the baselines and the later forest. `ModelEvaluator` checks that every prediction is aligned with the same observed targets, then uses Section 8's metric definitions. I index the evaluation table by **target date**, so a point labeled 1 July compares the forecast issued on 30 June with the rating observed on 1 July.
+I need the same scoring rules for ridge, the baselines and the different feature sets. `ModelEvaluator` checks that every prediction is aligned with the same observed targets, then uses Section 8's metric definitions. I index the evaluation table by **target date**, so a point labeled 1 July compares the forecast issued on 30 June with the rating observed on 1 July.
 
 There are three complementary views. The time plot shows when forecasts follow or miss changes. Grouping errors by **observed anxiety** shows which outcome levels are underpredicted or overpredicted; bias here means $\widehat y-y$, so a negative value means underprediction. The calibration check instead groups by **predicted anxiety** and asks whether the observed average matches the forecast average. These two groupings answer different questions.
 
@@ -2199,7 +2179,7 @@ $$\left(\frac{1}{|B|}\sum_{i\in B}\widehat y_i,\quad
 
 Points near the diagonal indicate agreement of bin averages. This is a descriptive check for a point forecast, not probability calibration or an uncertainty interval. A sparse bin is weak evidence; empty bins stay visible in the table rather than being treated as successful calibration.
 
-#### Why these error views are different
+#### What the different error scores tell me
 
 For an observed rating level $\ell$, define $A_\ell=\{i:y_i=\ell\}$. The error-by-level table reports
 
@@ -2310,7 +2290,7 @@ class ModelEvaluator:
 """)
 
 md(r"""
-### 9.3 Fit once on training, then forecast the validation period
+### 9.3 Training ridge and predicting the validation days
 
 The tuning decision is now fixed. I refit a fresh pipeline on all training rows, then call only `predict` on validation. The held-out observations can enter later forecasts as available history, as Section 8 explained; they do not refit the imputer, scaler or ridge coefficients within this block.
 
@@ -2376,13 +2356,13 @@ interp("ridge_calibration")
 md(r"""
 <a id="section-10"></a>
 
-## 10. Ridge from scratch: understanding what the solver does
+## 10. Writing ridge regression from scratch
 
 I can now use scikit-learn's result as a numerical reference. The aim here is to implement the mathematics myself, not to find a new model by trying more settings. I keep the **same alpha, training rows and fitted preprocessing** as Section 9. Only the optimizer changes.
 
 I will obtain the weights in two ways: a direct solution of the normal equations and repeated gradient-descent updates. Agreement between them and scikit-learn is a useful implementation check. It does not provide three independent pieces of evidence for forecast quality: they solve the same statistical problem.
 
-### 10.1 A linear model as one neuron
+### 10.1 Viewing the linear model as one neuron
 
 Each feature is multiplied by its weight. The model adds those contributions and the intercept, then applies the identity function $f(z)=z$. The neuron picture describes the prediction rule; learning the weights still requires the loss function and an optimization procedure.
 
@@ -2422,7 +2402,7 @@ plt.show()
 """)
 
 md(r"""
-### 10.2 Derive the gradients from the residuals
+### 10.2 Working out the gradients
 
 Let $r=\mathbf y-Xw-b\mathbf 1_n$. Then
 
@@ -2484,7 +2464,7 @@ print("Central finite differences agree with both analytic gradients.")
 """)
 
 md(r"""
-### 10.3 Remove the intercept algebraically, then solve for the weights
+### 10.3 Solving for the weights and intercept
 
 Section 7 showed that the best intercept for any fixed $w$ is $b=\overline y-\overline x^\top w$. I can substitute that result into the objective instead of repeatedly updating $b$.
 
@@ -2522,7 +2502,7 @@ Dividing the normal equations by $n$ gives $(G+\alpha I_d)w=q$, which is exactly
 
 Although Section 9 already standardizes the inputs, the class computes and stores their training means again so it also works for the noncentered test matrix. On the standardized real inputs those means are essentially zero. Centering the target is an internal algebraic step; prediction restores the offset through `self.intercept_`, so outputs remain on the original anxiety scale.
 
-### 10.4 Choose a stable step and check convergence
+### 10.4 Choosing the step size and checking convergence
 
 For the centered weights, the Hessian is $H=2(G+\alpha I_d)$. Let $L$ be its largest eigenvalue. I use $\eta=1/L$, a conservative stable step for this convex quadratic. The gradient tells me which direction to move; $L$ controls how sharply the objective curves, so it limits how far I move at once.
 
@@ -2672,7 +2652,7 @@ class RidgeScratch:
 """)
 
 md(r"""
-### 10.5 Check the implementation before interpreting coefficients
+### 10.5 Checking my ridge code against scikit-learn
 
 First I use a small matrix with nonzero column means, a constant column and two identical columns. It deliberately combines cases that can expose a penalized-intercept error or a singular-matrix problem. I compare both scratch solvers with scikit-learn using $n\alpha$ in its convention.
 
@@ -2680,7 +2660,7 @@ Then I implement the preprocessing directly with `MedianStandardizerScratch`. Fo
 
 `LeastSquaresScratch` separately covers the alpha-zero limit used by the later development experiments. It centers the inputs, solves the rank-aware least-squares problem with NumPy linear algebra and restores the intercept. The redundant-column example also checks its predictions against sklearn. Positive-alpha ridge still uses the uniquely regularized solve described above.
 
-#### Reading the scratch class against the equations
+#### Matching the code to the equations
 
 | Code | Mathematical role |
 |---|---|
@@ -2781,7 +2761,7 @@ display(scratch_validation_scorecard.round(6))
 interp("ridge_scratch_coefficients")
 
 md(r"""
-### 10.6 What this comparison establishes
+### 10.6 What I learned from checking the two versions
 
 The gradient check tests the derivatives. The small-matrix check tests intercept handling and correlated or constant inputs. The real-data comparison tests the alpha conversion, preprocessing alignment and both solvers together. The loss curve and stopping criterion show that the iterative fit actually converged.
 
@@ -2798,11 +2778,11 @@ There is also a distinction between **optimization error** and **forecast error*
 md(r"""
 <a id="section-11"></a>
 
-## 11. Window and horizon experiments (C4)
+## 11. Trying different lookback windows and forecast days
 
 Seven days was an understandable starting point, not a result. I now compare lookbacks $k=1,3,7,14$ for forecasts one and three days ahead. I tune each configuration using training-only time-series CV and compare their predictions on **the same 184 validation target dates**. There are no 2026 predictions in these experiments.
 
-### 11.1 What changes, and what stays fixed?
+### 11.1 Setting up the window and horizon comparisons
 
 The target is $y_t^{(h)}=a_{t+h}$. With $h=3$, the forecast must use information available three evenings before the target, not observations collected in between. Persistence therefore means $\widehat a_{t+3}=a_t$ for that task.
 
@@ -2810,7 +2790,7 @@ The lookback controls the available anxiety summaries: $k=1$ uses today's rating
 
 I hold the sleep decay at 0.8 and its shortfall threshold at 3, as in Section 6. I do not tune those choices in this experiment.
 
-### 11.2 Make the comparisons fair in calendar time
+### 11.2 Using the same dates for a fair comparison
 
 Longer windows lose more initial rows. I intersect eligible **target dates** across all eight forecasting configurations before comparing them. Each target rating is therefore identical across configurations, although its issue date changes with the horizon.
 
@@ -2941,7 +2921,7 @@ for h, predictions in c4_baselines.items():
         baseline_rows.append({"h": h, "Baseline": name, **regression_scores(actual, prediction, predictions["Persistence"])})
 c4_baseline_scores = pd.DataFrame(baseline_rows).set_index(["h", "Baseline"])
 display(c4_baseline_scores.round(4))
-print("C4 forecasts scored on validation only; alpha choices came from training-only CV.")
+print("Window and horizon forecasts scored on validation only; alpha choices came from training-only CV.")
 """)
 
 code(r"""
@@ -2957,7 +2937,7 @@ for row, h in enumerate(mae_grid.index):
 ax.set_xticks(range(4), [f"k = {k}" for k in mae_grid.columns])
 ax.set_yticks([0, 1], ["h = 1\nTomorrow", "h = 3\nThree days ahead"])
 ax.set_xlabel("Anxiety-summary lookback (calendar days)")
-ax.set_title("C4: same validation targets, different information windows", pad=14)
+ax.set_title("Same validation targets, different information windows", pad=14)
 ax.grid(False)
 fig.colorbar(image_map, ax=ax, label="Validation MAE (anxiety points)", shrink=0.85)
 fig.tight_layout()
@@ -2966,7 +2946,7 @@ plt.show()
 interp("c4_forecasts")
 
 md(r"""
-### 11.3 Why $h=0$ is a separate diagnostic
+### 11.3 Why predicting the same evening is a separate check
 
 Predicting the same evening's rating from the same evening's recorded habits is a retrospective association task. It is not tomorrow's forecast, and I have not established that all entries were recorded before the rating. I therefore exclude **all anxiety-history columns**, including their missingness and coverage indicators. Otherwise today's rating would directly reveal its own target.
 
@@ -2993,13 +2973,13 @@ print(f"Same-day inputs: {same_day_task['X'].shape[1]}; alpha: {same_day_choice[
 interp("c4_same_day")
 
 md(r"""
-### 11.4 A window decision is conditional on this experiment
+### 11.4 What these results say about the lookback window
 
 The central question stays **tomorrow's anxiety**, so I will not replace it with the same-day task or choose the forecast horizon simply because one score is lower. Within a horizon, a lower validation MAE is a useful development result, not proof of a uniquely best window.
 
-The controlled C4 fits use fewer training targets than Section 9: their common starting date accommodates fourteen-day history at a three-day horizon, and their common end date respects the three-day issue-time cutoff. Their alpha search also extends to $10^4$ for strongly regularized candidates and includes the unregularized $\alpha=0$ limit, implemented with `LinearRegression` and the same preprocessing. This avoids treating a minimum at nearly zero as evidence for a precisely identified positive penalty. The scratch ridge class in Section 10 retains its positive-alpha contract. I should therefore compare configurations **within the C4 table**, rather than attribute any difference from Section 9 entirely to the window.
+The controlled window and horizon fits use fewer training targets than Section 9: their common starting date accommodates fourteen-day history at a three-day horizon, and their common end date respects the three-day issue-time cutoff. Their alpha search also extends to $10^4$ for strongly regularized candidates and includes the unregularized $\alpha=0$ limit, implemented with `LinearRegression` and the same preprocessing. This avoids treating a minimum at nearly zero as evidence for a precisely identified positive penalty. The scratch ridge class in Section 10 retains its positive-alpha contract. I should therefore compare configurations **within the window and horizon table**, rather than attribute any difference from Section 9 entirely to the window.
 
-For C1 below, I retain the original **$k=7,h=1$ reference**, fixed before this window comparison. This keeps the question “do habits add to recent anxiety?” separate from choosing a window after looking at validation. Any preferred C4 window remains a development candidate to carry forward; it does not retrospectively change Sections 9–10 or turn the ablation into an independent evaluation of a validation-selected window.
+For the feature comparison below, I retain the original **$k=7,h=1$ reference**, fixed before this window comparison. This keeps the question “do habits add to recent anxiety?” separate from choosing a window after looking at validation. Any preferred lookback window remains a development candidate to carry forward; it does not retrospectively change Sections 9–10 or turn the ablation into an independent evaluation of a validation-selected window.
 """)
 
 # ---------------------------------------------------------------------------
@@ -3008,17 +2988,17 @@ For C1 below, I retain the original **$k=7,h=1$ reference**, fixed before this w
 md(r"""
 <a id="section-12"></a>
 
-## 12. Do habits add beyond anxiety history? Feature ablation (C1)
+## 12. Do habits help once I include past anxiety?
 
 This is the comparison closest to my original question. A full model beating persistence does not tell me whether habits helped: it also has more flexible anxiety-history summaries. I now compare feature groups directly, keeping the seven-day, one-day-ahead reference and the original 899-row training partition.
 
-### 12.1 Remove a domain completely
+### 12.1 Removing one group of inputs at a time
 
 Every candidate retains the known target-weekend flag as a common calendar control. “History” includes current anxiety, its rolling summaries and their missingness/coverage columns. “Lifestyle” includes sleep, exercise and socializing, with their related indicators. Removing sleep also removes both ratings, accumulated shortfall, current missingness flags and the missing-input recurrence. Otherwise the model could still receive the supposedly removed information indirectly through its engineered companions.
 
 Each candidate gets its own training-fitted imputer, scaler and tuned alpha. Reusing the full model's weights or its alpha after removing inputs would not give the smaller model a fair chance to adapt.
 
-### 12.2 Tune inside the fold that will evaluate the feature set
+### 12.2 Tuning each feature set within the training folds
 
 If I tune alpha on five folds and report the minimum on those same folds as if the choice were fixed beforehand, the score benefits from selection. Here I use **nested expanding-window CV** entirely within training:
 
@@ -3027,7 +3007,7 @@ If I tune alpha on five folds and report the minimum on those same folds as if t
 3. I refit that candidate on the outer fitting rows and forecast its outer held-out rows.
 4. I pool the five outer blocks, giving one genuinely held-out prediction per scored target for each candidate.
 
-Both inner and outer folds check that every fitting label is available by the next block's earliest issue evening. The 2025 validation block and 2026 final period are not used to tune or score C1.
+Both inner and outer folds check that every fitting label is available by the next block's earliest issue evening. The 2025 validation block and 2026 final period are not used to tune or score the feature comparison.
 
 For candidate $S$, write $\widehat\alpha_{f,S}$ for the alpha chosen inside outer fold $f$. The comparison estimates
 
@@ -3076,7 +3056,7 @@ for fold_number, (fit, score) in enumerate(c1_outer_folds, 1):
                            "Validation rows": len(score), "alpha": choice["alpha"],
                            "Inner selected MAE": choice["mae"],
                            "Outer MAE": mean_absolute_error(c1_y.iloc[score], prediction)})
-    print(f"Nested C1 fold {fold_number}/5 complete ({len(fit)} fitting, {len(score)} held-out forecasts).", flush=True)
+    print(f"Nested feature-comparison fold {fold_number}/5 complete ({len(fit)} fitting, {len(score)} held-out forecasts).", flush=True)
 
 c1_common_dates = c1_oof.index[c1_oof.notna().all(axis=1)]
 assert c1_common_dates.equals(pd.DatetimeIndex(target_dates.loc[common_cv_dates], name="target_date"))
@@ -3092,7 +3072,7 @@ print("The outer scores evaluate the inner tuning procedure, not the minimum inn
 """)
 
 md(r"""
-### 12.3 Read paired differences, not just a ranking
+### 12.3 Comparing the changes in error
 
 For each target date, the full and reduced models see the same forecasting problem. Let
 
@@ -3125,7 +3105,7 @@ axes[0].axhline(c1_scores.loc["Persistence", "MAE"], color=INK_2, linestyle="--"
 axes[0].set_xticks(range(6), short_names)
 axes[0].set_ylim(0, max(values.max(), c1_scores.loc["Persistence", "MAE"]) + 0.2)
 axes[0].set_ylabel("Outer-CV MAE (points)")
-axes[0].set_title("C1: tuned feature sets on the same 745 training-period forecasts", pad=14)
+axes[0].set_title("Tuned feature sets on the same 745 training-period forecasts", pad=14)
 axes[0].legend(fontsize=9)
 removals = ["History + calendar", "Full minus sleep", "Full minus exercise", "Full minus socializing"]
 gains = c1_paired.loc[removals, "MAE reduced minus full"]
@@ -3146,1300 +3126,19 @@ plt.show()
 interp("c1_results")
 
 md(r"""
-### 12.4 What an ablation can and cannot answer
+### 12.4 What I can learn from removing inputs
 
 This comparison asks whether these recorded habits, represented by these features, improve this ridge forecasting procedure beyond recent anxiety and a shared calendar flag. It does not test whether sleep, exercise or social contact causally affect my wellbeing. An unhelpful predictive feature could still describe something important in my life; its effect could be nonlinear, delayed differently, obscured by measurement noise or already reflected in current anxiety.
 
 Dropping a correlated domain also lets the remaining coefficients change. A small removal effect is not proof that the domain has no information, and a coefficient's sign from Section 10 is not a substitute for this out-of-fold comparison. Nested alpha tuning makes the scorecard fairer, but it does not remove distribution change or turn the 745 dependent days into independent experiments.
 
-**Next, Section 13:** test whether a random forest can capture thresholds and interactions missed by ridge, including a forest ablation. The full and history-based ridge candidates remain useful references. Final 2026 model comparisons belong in Section 14, with the earlier descriptive exposure disclosed.
-""")
-
-# ---------------------------------------------------------------------------
-# 13. Random forests, from sklearn and from scratch
-# ---------------------------------------------------------------------------
-md(r"""
-<a id="section-13"></a>
-
-## 13. Can a random forest capture what ridge misses? (C2)
-
-Ridge gives each feature one additive slope. A tree can instead ask conditional questions: does sleep matter differently when current anxiety is already high, or when I did not socialize? That flexibility might help, but it can also fit patterns that do not repeat. I will judge it using the same chronological discipline as ridge.
-
-This is a different way to represent a relationship, not just a different way to optimize ridge. Ridge combines all inputs through $b+\sum_jw_jx_j$. A tree divides the feature space into regions and gives each region a constant prediction. A forest averages many such partitions. It can represent a threshold or interaction without me writing a product feature in advance. Whether it actually learns a useful interaction in this journal still has to be tested; the model's capacity alone is not evidence that an interaction exists.
-
-I retain **$k=7,h=1$** for both model families and their ablations. Section 11 found only about a 0.003-point difference between the three- and seven-day tomorrow forecasts. Keeping the established weekly reference gives a direct model-family comparison with identical available information. This is a development choice made before scoring 2026, not proof that seven days is uniquely optimal.
-
-### 13.1 How a regression tree makes a prediction
-
-A leaf predicts the mean of its fitting targets. For a node containing targets $S$, the squared-error impurity is its population variance, $\mathrm{Var}(S)=|S|^{-1}\sum_{i\in S}(y_i-\overline y_S)^2$. A split chooses a feature and threshold, giving children $S_L,S_R$. I will work through the prediction rule first, then derive how the split is scored.
-
-#### Why the leaf predicts a mean
-
-If a leaf must give every observation the same number $c$, its squared-error cost is $\sum_{i\in S}(y_i-c)^2$. Differentiating gives $2|S|c-2\sum_{i\in S}y_i=0$, so the minimizing value is $c=\overline y_S$. The mean is therefore a consequence of the squared-error objective, not an arbitrary default.
-
-For feature $j$ and threshold $q$, the two groups are $S_L=\{i:x_{ij}\leq q\}$ and $S_R=\{i:x_{ij}>q\}$. Each child gets its own mean. The split is useful when those two means describe the targets better than one shared parent mean. Its improvement is
-
-$$\Delta=\mathrm{Var}(S)-\frac{|S_L|}{|S|}\mathrm{Var}(S_L)-\frac{|S_R|}{|S|}\mathrm{Var}(S_R).$$
-
-I choose the split with the largest positive reduction, subject to a maximum depth and minimum leaf size. This is regression: there are no class probabilities or Gini scores. The variance uses divisor $|S|$, matching squared error around the leaf mean.
-
-The child variances are weighted by their sample fractions. Without those weights, a tiny child would count as much as a large one. Multiplying the formula by $|S|$ gives the equivalent reduction in squared-error sums:
-
-$$|S|\Delta=\mathrm{SSE}(S)-\mathrm{SSE}(S_L)-\mathrm{SSE}(S_R).$$
-
-These are variances of the **target ratings**, not variances of the input feature being split. A feature can vary a lot without creating a useful separation of future anxiety.
-
-#### A split I can calculate by hand
-
-The small tree check later uses inputs $x=[0,1,2,3,4,5,6,7]$ and targets $y=[0,0,1,1,6,6,8,8]$. These are arithmetic-test values, separate from my journal. Before splitting, the mean prediction is **3.75**, the SSE is **89.5**, and the variance is $89.5/8=11.1875$.
-
-A threshold of **3.5** gives left targets $[0,0,1,1]$ and right targets $[6,6,8,8]$. Their predictions are **0.5** and **7**, with variances **0.25** and **1**. Thus
-
-$$\Delta=11.1875-\frac48(0.25)-\frac48(1)=10.5625.$$
-
-The two-child SSE is $4(0.25)+4(1)=5$, a reduction of $89.5-5=84.5=8\Delta$. This is exactly the kind of calculation the split search performs. A further split can separate the two distinct target levels inside each child. On real data, continuing to split may instead isolate noise, which is why I constrain the tree.
-
-The search is **greedy**: it chooses the best available split at the current node, then repeats within each child. It does not search every possible complete tree for a global optimum. Once a new forecast reaches a leaf, its target is not used to choose the prediction; the stored fitting-target mean is returned.
-
-A forest adds two sources of diversity. Each tree fits a bootstrap sample of $n$ rows drawn with replacement, and each node considers a newly sampled subset of features. Its forecast averages the trees:
-
-$$\widehat y(x)=\frac1T\sum_{b=1}^{T}h_b(x).$$
-
-Averaging helps reduce the variability of individual trees, especially when they are not all alike. It does not remove time dependence or make an invalid split valid. Missing predictors are imputed within each fit. Trees do not need standardization because their thresholds can adapt to monotone changes of units.
-
-#### Why several trees can be more stable than one
-
-A bootstrap sample has $n$ draws but can contain fewer than $n$ distinct observations. Some days appear several times and some do not appear at all. Separately, sampling features at each node prevents every tree from always choosing the same strong input first. These two mechanisms encourage different trees to make different partitions.
-
-For a teaching calculation, imagine repeating the learning experiment with different training data and tree randomization. Under an equal-variance assumption, if each tree prediction has variance $v$ and every pair has correlation $\rho$, then
-
-$$\mathrm{Var}\!\left(\frac1T\sum_b h_b(x)\right)
-=\frac{v}{T}+\frac{T-1}{T}\rho v
-=v\left[\rho+\frac{1-\rho}{T}\right].$$
-
-The uncorrelated part shrinks with more trees, but a shared-error component remains. This explains why diversity matters as well as tree count. It is a teaching calculation about correlated **tree predictions**, not an estimate of my forecast uncertainty or a claim that journal days are independent.
-
-Each tree and the forest average predict means of fitting targets, so their outputs stay inside the fitting-target range. That is useful for a bounded rating scale, but it also limits extrapolation to unusually severe days. Ridge has no such range constraint. Neither property alone tells me which model will forecast better.
-
-The forest itself does not understand a daily sequence: its access to recent anxiety comes from the causal history features built in Section 6. Likewise, row-wise bootstrapping is part of this learning algorithm, not evidence that daily errors are independent. It differs from the moving-block bootstrap planned for coefficient uncertainty in Section 15. I assess whether this learning algorithm works by forecasting later dates, rather than assuming that its randomization makes the evaluation valid.
-
-### 13.2 Tune on training, then ablate on validation
-
-I compare six predeclared depth/leaf/feature-sampling configurations, each with 60 trees and squared-error splits. Every feature set gets its own five-fold training-only expanding CV search and fresh preprocessing. I then refit it on all 899 training rows and score the same 184 validation targets.
-
-| Setting | Role in the learning procedure |
-|---|---|
-| `max_depth` | Limits the number of decisions on a path; depth 3 permits at most 8 leaves |
-| `min_samples_leaf` | Requires support for each leaf, avoiding predictions based on a few distinct fitting rows |
-| `max_features` | Controls the candidate feature subset at a node; `sqrt` uses $\lfloor\sqrt d\rfloor$, while 0.8 uses $\lfloor0.8d\rfloor$ |
-| `n_estimators=60` | Fixes the number of trees being averaged across all candidates |
-| `bootstrap=True` | Gives each tree a with-replacement fitting sample |
-| `random_state=156` | Makes the experiment reproducible; it is not a claim that randomness has been eliminated |
-
-The six configurations are a limited, declared search, not every combination of these settings. In particular, some settings change together, so I cannot attribute a winning candidate's score to one hyperparameter in isolation.
-
-For candidate configuration $\theta$ and feature set $S$, I choose
-
-$$\widehat\theta_S=\operatorname*{arg\,min}_{\theta\in\Theta}
-\frac1{745}\sum_{f=1}^{5}\sum_{i\in V_f}|y_i-\widehat f_{f,S,\theta}(x_i)|,$$
-
-where $\widehat f_{f,S,\theta}$ is fitted only on that fold's earlier rows, including its imputer. The tree splits minimize squared-error impurity, while this selection criterion is MAE, just as ridge is trained with squared error and selected with MAE. All candidates use the same 745 internal scored targets. I then refit the chosen configuration for each feature set on all 899 training rows and compare the six resulting models on validation.
-
-The feature groups are the same as Section 12, including a shared calendar flag. Removing a habit also removes its missingness and engineered companions. The imputer is fitted again for each candidate and fold. Changing a unit, such as hours to minutes, does not create ridge's coefficient-penalty problem here: the order of the values is preserved and the corresponding thresholds change units. Imputation still needs the same careful fitting boundary.
-
-This forest ablation uses **validation scores**, unlike Section 12's nested training-CV ridge scorecard. I will not compare the two tables as though they measured the same dates. Selecting a forest feature set from validation also means its best validation score benefits from selection; Section 14 supplies the later-period check.
-""")
-
-code(r"""
-from sklearn.ensemble import RandomForestRegressor
-from sklearn.tree import DecisionTreeRegressor
-
-FOREST_TREES = 60
-FOREST_CONFIGS = [
-    {"max_depth": depth, "min_samples_leaf": leaf, "max_features": features}
-    for depth, leaf, features in [(3, 8, "sqrt"), (6, 8, "sqrt"), (None, 8, "sqrt"),
-                                   (3, 20, 0.8), (6, 20, 0.8), (None, 20, 0.8)]
-]
-
-
-def make_forest_pipeline(config, oob=False):
-    return Pipeline([
-        ("imputer", SimpleImputer(strategy="median", keep_empty_features=True)),
-        ("forest", RandomForestRegressor(n_estimators=FOREST_TREES, criterion="squared_error",
-                                           bootstrap=True, oob_score=oob, random_state=156,
-                                           n_jobs=1, **config)),
-    ])
-
-
-forest_search_rows, forest_validation_rows = [], []
-forest_validation_predictions, forest_training_models, forest_selected_configs = {}, {}, {}
-for name, columns in c1_feature_sets.items():
-    candidate_scores = []
-    for candidate_number, config in enumerate(FOREST_CONFIGS):
-        oof = pd.Series(np.nan, index=X_train.index)
-        for fit, score in cv_splits["Expanding TimeSeriesSplit"]:
-            assert target_dates.loc[X_train.index[fit]].max() <= X_train.index[score].min()
-            model = make_forest_pipeline(config)
-            model.fit(X_train.iloc[fit][columns], y_train.iloc[fit])
-            oof.iloc[score] = model.predict(X_train.iloc[score][columns])
-        mae = mean_absolute_error(y_train.loc[common_cv_dates], oof.loc[common_cv_dates])
-        candidate_scores.append(mae)
-        forest_search_rows.append({"Feature set": name, "Candidate": candidate_number,
-                                   "Candidate CV MAE": mae, **config})
-    best_number = int(np.argmin(candidate_scores))
-    config = FOREST_CONFIGS[best_number].copy()
-    fitted = make_forest_pipeline(config, oob=True).fit(X_train[columns], y_train)
-    prediction = pd.Series(fitted.predict(X_val[columns]), index=X_val.index)
-    forest_validation_predictions[name] = prediction
-    forest_training_models[name], forest_selected_configs[name] = fitted, config
-    forest_validation_rows.append({"Feature set": name, "Features": len(columns),
-                                    "Chosen candidate": best_number, "Training CV MAE": candidate_scores[best_number],
-                                    **regression_scores(y_val, prediction, validation_baselines["Persistence"])})
-    print(f"Forest tuning and validation complete: {name}", flush=True)
-
-forest_validation_scores = pd.DataFrame(forest_validation_rows).set_index("Feature set")
-forest_tuning_details = pd.DataFrame(forest_search_rows)
-display(forest_validation_scores.round(4))
-forest_feature_choice = forest_validation_scores["MAE"].idxmin()
-forest_config_choice = forest_selected_configs[forest_feature_choice]
-forest_columns_choice = c1_feature_sets[forest_feature_choice]
-print("Validation-selected forest feature set:", forest_feature_choice)
-print("Selected configuration:", forest_config_choice)
-print("The CV minima are selection scores; the validation columns refer to July–December 2025.")
-""")
-
-code(r"""
-fig, ax = plt.subplots(figsize=(9, 4.6))
-values = forest_validation_scores["MAE"]
-ax.bar(range(len(values)), values, color=[ORANGE if name == forest_feature_choice else BLUE for name in values.index])
-for position, value in enumerate(values):
-    ax.text(position, value - 0.07, f"{value:.3f}", ha="center", va="top", fontsize=10, color="white", weight="bold")
-ax.axhline(validation_baseline_scores.loc["Persistence", "MAE"], color=INK_2, linestyle="--", label="Persistence")
-ax.set_xticks(range(6), ["History +\ncalendar", "Lifestyle +\ncalendar", "Full", "Minus\nsleep", "Minus\nexercise", "Minus\nsocializing"])
-ax.set_ylim(0, max(values.max(), validation_baseline_scores.loc["Persistence", "MAE"]) + 0.2)
-ax.set_ylabel("Validation MAE (anxiety points)")
-ax.set_title("Forest ablation: separately tuned models, same 184 validation targets", pad=14)
-ax.grid(axis="x", visible=False)
-ax.legend()
-fig.tight_layout()
-plt.show()
-""")
-interp("forest_ablation")
-
-md(r"""
-### 13.3 Out-of-bag scoring is a diagnostic, not temporal validation
-
-A bootstrap draw leaves about $(1-1/n)^n\approx e^{-1}\approx36.8\%$ of fitting rows out of each tree. For each row, an out-of-bag (OOB) prediction averages only trees whose bootstrap samples excluded it. Scikit-learn reports an OOB $R^2$; my scratch forest also records how many OOB trees cover each row.
-
-For one row, the probability of being missed by one draw is $1-1/n$. Being missed by all $n$ independent draws has probability $(1-1/n)^n$. This is why an OOB prediction uses only a subset of the 60 trees, not the entire forest.
-
-If $\mathcal B_i$ is the set of trees that left fitting row $i$ out, then
-
-$$\widehat y_i^{\mathrm{OOB}}=\frac1{|\mathcal B_i|}\sum_{b\in\mathcal B_i}h_b(x_i).$$
-
-The denominator can differ between rows. If no tree leaves a row out, its OOB prediction is undefined; my scratch code records `NaN` and excludes it from its OOB $R^2$. Coverage must therefore be reported alongside the score. Also, OOB excludes a row from a tree's bootstrap fitting targets, not from the pipeline's training-fitted imputer: this diagnostic is not a fully held-out pipeline assessment.
-
-OOB exclusion is random in time. A tree predicting an early OOB row may have fitted later observations, just like the shuffled comparison in Section 8. I report the number as an internal diagnostic, not as a forecast-performance estimate or a substitute for expanding-window CV. It is also $R^2$, not MAE, so the raw number cannot be compared with the MAE columns.
-
-### 13.4 Build the tree and forest from scratch
-
-The tree below sorts each candidate feature, considers thresholds only between distinct adjacent values, and uses cumulative sums of $y$ and $y^2$ to calculate child squared-error sums. Since $\mathrm{SSE}=\sum y_i^2-(\sum y_i)^2/n$, each candidate split can be evaluated without repeatedly rebuilding its target arrays.
-
-In a forest bootstrap, I store each included observation once and give it its draw count $w_i$ as a weight. The corresponding formulas are $\overline y_w=\sum_iw_iy_i/\sum_iw_i$ and $\mathrm{SSE}_w=\sum_iw_iy_i^2-(\sum_iw_iy_i)^2/\sum_iw_i$. The code caches these weighted cumulative sums. Minimum leaf size counts distinct included rows, matching scikit-learn's weighted-bootstrap convention; duplicate draws still affect the leaf mean and impurity. The checks include a weighted tree as well as the unweighted example.
-
-If the sampled candidate features contain no valid partition, the search can inspect additional features until a valid partition is found or all features are exhausted. This matters because some missingness indicators can be constant in a node. A valid partition must also meet the leaf-size rule; the tree stops if none gives a positive impurity reduction.
-
-One random-number generator belongs to each tree. Every recursive node draws a new feature subset from that generator; I do not reseed by depth. The forest draws independent bootstrap samples and tree seeds from its own generator. These choices avoid making every node at the same depth consider the same features.
-
-#### Following the implementation
-
-`_grow` first stores the node's weighted target mean. If the depth, support or variance rule prevents another split, that stored value becomes the leaf prediction. Otherwise it sorts candidate inputs and examines only positions with distinct values on either side and enough distinct rows in both children. This prevents trying to send identical input values to different sides of one threshold.
-
-For every valid position, `children_sse` measures the combined left/right cost. `gains` subtracts it from the parent cost and divides by total weight, giving the variance reduction. The best positive gain determines the feature and midpoint threshold. The recursive calls then repeat the same calculation on the two subsets. During prediction, the code follows the stored comparisons until no split is present and returns the leaf value.
-
-| Scratch object | What it stores or computes |
-|---|---|
-| `root_` and child dictionaries | The learned decisions and leaf means |
-| `multiplicity` | How many times each original fitting row was drawn for one tree |
-| `trees_` | The separately fitted randomized trees |
-| `bootstrap_indices_` | The draws needed to audit which rows were excluded |
-| `oob_counts_` | The number of eligible OOB trees for each fitting row |
-| `oob_prediction_` | The mean prediction from those eligible trees only |
-| Forest `predict` | One column of predictions per tree, averaged across columns |
-
-I can test these pieces separately. A deterministic one-feature tree checks split arithmetic against scikit-learn. Weighted inputs check bootstrap multiplicities. Two forests with the same seed check reproducibility. Explicitly averaging stored trees checks aggregation, and reconstructing the eligible OOB tree list checks that a row was not predicted by a tree that fitted it. Similar validation MAE is useful context, but it would not substitute for these implementation checks.
-""")
-
-code(r"""
-class RegressionTreeScratch:
-    def __init__(self, max_depth=None, min_samples_leaf=8, max_features="sqrt", random_state=156):
-        self.max_depth, self.min_samples_leaf = max_depth, min_samples_leaf
-        self.max_features, self.random_state = max_features, random_state
-
-    def fit(self, X, y, sample_weight=None):
-        X, y = np.asarray(X, dtype=float), np.asarray(y, dtype=float)
-        if X.ndim != 2 or y.shape != (len(X),) or len(y) == 0:
-            raise ValueError("Expected nonempty X (n,d) and y (n,)")
-        if not np.isfinite(X).all() or not np.isfinite(y).all():
-            raise ValueError("Impute inputs before fitting")
-        weights = np.ones(len(y)) if sample_weight is None else np.asarray(sample_weight, dtype=float)
-        if weights.shape != y.shape or not np.isfinite(weights).all() or (weights <= 0).any():
-            raise ValueError("Supply positive finite weights for the included rows")
-        self.n_features_in_ = X.shape[1]
-        self.rng_ = np.random.default_rng(self.random_state)
-        self.root_ = self._grow(X, y, weights, 0)
-        return self
-
-    def _grow(self, X, y, weights, depth):
-        node = {"value": float(np.average(y, weights=weights))}
-        n, d = X.shape
-        if (self.max_depth is not None and depth >= self.max_depth) or n < 2 * self.min_samples_leaf:
-            return node
-        total_weight = float(weights.sum())
-        parent_sse = float(np.sum(weights * (y - node["value"]) ** 2))
-        if parent_sse <= 1e-12:
-            return node
-        count = max(1, int(np.sqrt(d))) if self.max_features == "sqrt" else max(1, int(float(self.max_features) * d))
-        best_gain, best_split = 0., None
-        valid_partition = False
-        for inspected, feature in enumerate(self.rng_.permutation(d)):
-            if inspected >= min(d, count) and valid_partition:
-                break
-            order = np.argsort(X[:, feature], kind="stable")
-            xs, ys, ws = X[order, feature], y[order], weights[order]
-            positions = np.arange(self.min_samples_leaf, n - self.min_samples_leaf + 1)
-            positions = positions[xs[positions - 1] < xs[positions]]
-            if not len(positions):
-                continue
-            valid_partition = True
-            sums, squares, cumulative_weight = np.cumsum(ws * ys), np.cumsum(ws * ys ** 2), np.cumsum(ws)
-            left_sum, left_sq = sums[positions - 1], squares[positions - 1]
-            right_sum, right_sq = sums[-1] - left_sum, squares[-1] - left_sq
-            left_weight = cumulative_weight[positions - 1]
-            children_sse = left_sq - left_sum ** 2 / left_weight + right_sq - right_sum ** 2 / (total_weight - left_weight)
-            gains = (parent_sse - children_sse) / total_weight
-            best_position = int(np.argmax(gains))
-            if gains[best_position] > best_gain + 1e-12:
-                split_at = positions[best_position]
-                best_gain = float(gains[best_position])
-                best_split = (int(feature), float(xs[split_at - 1] + (xs[split_at] - xs[split_at - 1]) / 2))
-        if best_split is None:
-            return node
-        feature, threshold = best_split
-        left = X[:, feature] <= threshold
-        node.update({"feature": feature, "threshold": threshold,
-                     "left": self._grow(X[left], y[left], weights[left], depth + 1),
-                     "right": self._grow(X[~left], y[~left], weights[~left], depth + 1)})
-        return node
-
-    def predict(self, X):
-        X = np.asarray(X, dtype=float)
-        if X.ndim != 2 or X.shape[1] != self.n_features_in_ or not np.isfinite(X).all():
-            raise ValueError("Prediction inputs must be finite with the fitted columns")
-        predictions = []
-        for row in X:
-            node = self.root_
-            while "feature" in node:
-                node = node["left"] if row[node["feature"]] <= node["threshold"] else node["right"]
-            predictions.append(node["value"])
-        return np.array(predictions)
-
-
-class RandomForestRegressorScratch:
-    def __init__(self, n_estimators=60, max_depth=None, min_samples_leaf=8, max_features="sqrt", random_state=156):
-        self.n_estimators, self.random_state = n_estimators, random_state
-        self.tree_options = dict(max_depth=max_depth, min_samples_leaf=min_samples_leaf, max_features=max_features)
-
-    def fit(self, X, y):
-        X, y = np.asarray(X, dtype=float), np.asarray(y, dtype=float)
-        rng = np.random.default_rng(self.random_state)
-        self.trees_, self.bootstrap_indices_ = [], []
-        oob_sum, self.oob_counts_ = np.zeros(len(y)), np.zeros(len(y), dtype=int)
-        for _ in range(self.n_estimators):
-            sampled = rng.integers(0, len(y), size=len(y))
-            tree = RegressionTreeScratch(random_state=int(rng.integers(0, 2 ** 31 - 1)), **self.tree_options)
-            multiplicity = np.bincount(sampled, minlength=len(y))
-            included = multiplicity > 0
-            tree.fit(X[included], y[included], sample_weight=multiplicity[included])
-            self.trees_.append(tree)
-            self.bootstrap_indices_.append(sampled)
-            oob = np.setdiff1d(np.arange(len(y)), np.unique(sampled))
-            oob_sum[oob] += tree.predict(X[oob])
-            self.oob_counts_[oob] += 1
-        covered = self.oob_counts_ > 0
-        self.oob_prediction_ = np.full(len(y), np.nan)
-        self.oob_prediction_[covered] = oob_sum[covered] / self.oob_counts_[covered]
-        self.oob_score_ = r2_score(y[covered], self.oob_prediction_[covered]) if covered.sum() > 1 else np.nan
-        return self
-
-    def predict(self, X):
-        return np.column_stack([tree.predict(X) for tree in self.trees_]).mean(axis=1)
-""")
-
-code(r"""
-# Unique optimum on a one-feature example: exact agreement is appropriate here.
-tree_check_X = np.arange(8, dtype=float).reshape(-1, 1)
-tree_check_y = np.array([0., 0., 1., 1., 6., 6., 8., 8.])
-tree_check = RegressionTreeScratch(max_depth=2, min_samples_leaf=2, max_features=1.).fit(tree_check_X, tree_check_y)
-tree_reference = DecisionTreeRegressor(max_depth=2, min_samples_leaf=2, max_features=1., random_state=156).fit(tree_check_X, tree_check_y)
-np.testing.assert_allclose(tree_check.predict(tree_check_X), tree_reference.predict(tree_check_X))
-assert tree_check.root_["threshold"] == tree_reference.tree_.threshold[0]
-check_weights = np.array([1., 2., 1., 3., 1., 1., 2., 1.])
-weighted_check = RegressionTreeScratch(max_depth=1, min_samples_leaf=2, max_features=1.).fit(
-    tree_check_X, tree_check_y, sample_weight=check_weights)
-weighted_reference = DecisionTreeRegressor(max_depth=1, min_samples_leaf=2, random_state=156).fit(
-    tree_check_X, tree_check_y, sample_weight=check_weights)
-np.testing.assert_allclose(weighted_check.predict(tree_check_X), weighted_reference.predict(tree_check_X))
-seed_check_a = RandomForestRegressorScratch(n_estimators=5, max_depth=2, min_samples_leaf=2).fit(tree_check_X, tree_check_y)
-seed_check_b = RandomForestRegressorScratch(n_estimators=5, max_depth=2, min_samples_leaf=2).fit(tree_check_X, tree_check_y)
-np.testing.assert_allclose(seed_check_a.predict(tree_check_X), seed_check_b.predict(tree_check_X))
-np.testing.assert_allclose(seed_check_a.predict(tree_check_X),
-                           np.mean([tree.predict(tree_check_X) for tree in seed_check_a.trees_], axis=0))
-for row, count in enumerate(seed_check_a.oob_counts_):
-    eligible_trees = [tree for tree, sampled in zip(seed_check_a.trees_, seed_check_a.bootstrap_indices_) if row not in sampled]
-    assert count == len(eligible_trees)
-    if count:
-        np.testing.assert_allclose(seed_check_a.oob_prediction_[row],
-                                   np.mean([tree.predict(tree_check_X[[row]])[0] for tree in eligible_trees]))
-print("Passed: deterministic split, sklearn tree agreement, seed reproducibility, forest averaging and OOB membership.")
-
-selected_forest_training = forest_training_models[forest_feature_choice]
-forest_imputer = MedianStandardizerScratch(scale=False).fit(X_train[forest_columns_choice])
-np.testing.assert_allclose(forest_imputer.transform(X_train[forest_columns_choice]),
-    selected_forest_training.named_steps["imputer"].transform(X_train[forest_columns_choice]))
-forest_train_matrix = forest_imputer.transform(X_train[forest_columns_choice])
-forest_val_matrix = forest_imputer.transform(X_val[forest_columns_choice])
-scratch_forest = RandomForestRegressorScratch(n_estimators=FOREST_TREES, **forest_config_choice).fit(forest_train_matrix, y_train)
-scratch_forest_validation = pd.Series(scratch_forest.predict(forest_val_matrix), index=X_val.index)
-assert scratch_forest_validation.between(y_train.min(), y_train.max()).all()
-forest_implementation_scores = pd.DataFrame({
-    "sklearn forest": regression_scores(y_val, forest_validation_predictions[forest_feature_choice], validation_baselines["Persistence"]),
-    "Scratch forest": regression_scores(y_val, scratch_forest_validation, validation_baselines["Persistence"]),
-}).T
-display(forest_implementation_scores.round(4))
-sklearn_oob_counts = np.zeros(len(y_train), dtype=int)
-for sampled in selected_forest_training.named_steps["forest"].estimators_samples_:
-    excluded = np.bincount(sampled, minlength=len(y_train)) == 0
-    sklearn_oob_counts += excluded
-assert (sklearn_oob_counts > 0).all()
-display(pd.DataFrame({"OOB R2": [selected_forest_training.named_steps["forest"].oob_score_, scratch_forest.oob_score_],
-                      "Covered fitting rows": [int((sklearn_oob_counts > 0).sum()), int((scratch_forest.oob_counts_ > 0).sum())]},
-                     index=["sklearn forest", "Scratch forest"]).round(4))
-""")
-interp("forest_scratch")
-
-md(r"""
-### 13.5 Freeze the comparison before opening the final scorecard
-
-The single-tree arithmetic check can match scikit-learn exactly. Entire forests need not: the implementations use different random-number streams and bootstrap realizations, and their threshold arithmetic can differ. I compare their validation behavior and verify the scratch algorithm's averaging and OOB bookkeeping instead of falsely asserting identical ensemble predictions. The sklearn forest remains the main forest reference; the scratch forest is an implementation comparison, not a second chance to select a favorable final result.
-
-For ridge, I compare the full and history-plus-calendar versions on the same 2025 validation block, tuning each alpha on training-only CV. The full model is the Section 9 reference; the history version answers whether that reference needs the additional habits. The full reference retains its original positive-alpha grid, while the history fit uses the extended grid including OLS from Section 11. This is a comparison of those documented procedures; Section 12 remains the controlled ridge ablation with the same alpha grid for every feature set. For the forest, the six-set validation ablation above selects its inputs. This is still development: neither validation minimum should be described as an untouched final score.
-
-The freeze applies to the learning procedure: the input columns, window, horizon, alpha or forest configuration, and the rule used to choose warning cutoffs. It does not mean I must keep the original 899-row coefficients forever. I can refit the chosen procedure on all pre-2026 development data once those decisions are made. What I must not do is use the final results to select new settings and then describe that revised choice as independently tested.
-""")
-
-code(r"""
-ridge_development_models = {"Full": ridge_pipeline}
-ridge_development_predictions = {"Full": ridge_validation_predictions}
-history_columns = c1_feature_sets["History + calendar"]
-history_choice = tune_development_ridge(X_train[history_columns], y_train, cv_splits["Expanding TimeSeriesSplit"])
-history_model = make_experiment_pipeline(history_choice["alpha"], len(X_train)).fit(X_train[history_columns], y_train)
-ridge_development_models["History + calendar"] = history_model
-ridge_development_predictions["History + calendar"] = pd.Series(history_model.predict(X_val[history_columns]), index=X_val.index)
-ridge_development_scores = pd.DataFrame({
-    name: regression_scores(y_val, prediction, validation_baselines["Persistence"])
-    for name, prediction in ridge_development_predictions.items()}).T
-display(ridge_development_scores.round(4))
-ridge_feature_choice = ridge_development_scores["MAE"].idxmin()
-ridge_columns_choice = c1_feature_sets[ridge_feature_choice]
-ridge_alpha_choice = selected_alpha if ridge_feature_choice == "Full" else history_choice["alpha"]
-print("Validation-selected ridge inputs:", ridge_feature_choice, "; alpha:", ridge_alpha_choice)
-""")
-
-# ---------------------------------------------------------------------------
-# 14. Frozen-model final evaluation
-# ---------------------------------------------------------------------------
-md(r"""
-<a id="section-14"></a>
-
-## 14. Head-to-head on the 2026 final period
-
-The model choices above are now fixed. I refit the selected pipelines on **training plus validation targets through 31 December 2025**, then forecast the observed 2026 targets. Alpha, forest settings, feature sets and the seven-day window stay fixed during final evaluation. All models use the same target dates and the same successive one-day-ahead information policy from Section 8.
-
-This is the first model-scoring use of 2026 in the notebook. I already explored its measurements descriptively in Section 5, so it is a reserved final model evaluation period, not a claim of completely unseen data. Re-running the notebook reproduces a fixed evaluation; its results must not be used to revise the choices and still be called a first untouched test. In practical terms, seeing 2026 plots could have influenced my feature ideas or expectations even without fitting to its targets. One concrete example is the weekend feature: Section 5's weekday table includes 2026 and helps motivate that design choice, so the feature-design reasoning is not independent of the final period. A genuine new holdout would be a later period collected after these decisions were fixed. This is a limit on how independently the result confirms the choices, not a claim that the model was fitted on 2026.
-
-I want this section to answer three separate questions. **Average forecast error:** does learning improve on persistence? **Error on severe days:** does a model that looks reasonable on average miss the high ratings? **Advance warnings:** after fixing a cutoff, which high days and observed episodes receive a warning? A model can improve the first and still struggle with the other two.
-
-| Data role | Targets | What happens here |
-|---|---:|---|
-| Original training | 899 | Previously fitted CV models and learned development settings |
-| 2025 validation | 184 | Compared feature sets and selected warning cutoffs |
-| Combined development | 1,083 | Refits the already selected forecasting procedures |
-| 2026 final evaluation | 282 observed targets | Measures fixed-procedure errors and warnings |
-
-The last row is not used to fit medians, scales, coefficients, trees or cutoffs. Its observed ratings are used to calculate errors, and may become available history for **later** forecasts. Those two uses are consistent with the evening-to-next-evening task, not with predicting the entire year from January without observing anything new.
-
-### 14.1 Fix the high-anxiety warning rule using validation
-
-A high-anxiety target means the self-rating is **at least 6**, as planned. A warning is issued when a model's numeric forecast is **at least** a cutoff chosen from **2025 validation**. The cutoff need not be 6: a model can systematically predict less extreme values, as Section 9 showed. This is thresholding a regression score, not interpreting it as a probability or a diagnosis.
-
-For each main forecasting rule, I choose the cutoff maximizing validation $F_1=2PR/(P+R)$, with the highest cutoff breaking ties. Precision $P$ is the fraction of warning days that are actually high; recall $R$ is the fraction of high days warned about. F1 is a declared balance between them, not a personalized clinical cost function. I fix these cutoffs before computing any 2026 scores. Validation warning performance also benefits from cutoff selection.
-
-#### Turn a rating forecast into a warning
-
-Let $z_i=\mathbb 1\{y_i\geq6\}$ indicate an observed high day, and let $s_i=\widehat y_i$ be a model's forecast score. At cutoff $q$, the warning is $A_i(q)=\mathbb 1\{s_i\geq q\}$. The two thresholds have different jobs: **6 defines the outcome**, while **$q$ defines the decision made from the forecast**.
-
-For example, if a model forecasts 4.8 for a day that later receives rating 7, it underpredicts the severity by 2.2 points. It can still produce a correct warning if its preselected cutoff is 4.4. That is why an underpredicting regression model can have useful recall without accurately forecasting the high-day magnitude. Conversely, lowering the cutoff can catch more high days while also warning on more moderate days.
-
-The warning counts are
-
-$$\mathrm{TP}=\sum_i A_i z_i,\qquad
-\mathrm{FP}=\sum_i A_i(1-z_i),\qquad
-\mathrm{FN}=\sum_i(1-A_i)z_i.$$
-
-Then $P=\mathrm{TP}/(\mathrm{TP}+\mathrm{FP})$, $R=\mathrm{TP}/(\mathrm{TP}+\mathrm{FN})$, and
-
-$$F_1=\frac{2\mathrm{TP}}{2\mathrm{TP}+\mathrm{FP}+\mathrm{FN}},\qquad
-q^*=\operatorname*{arg\,max}_{q\in\mathcal Q_{\mathrm{val}}}F_{1,\mathrm{val}}(q).$$
-
-I implement the curve directly: sort the unique forecast scores, count true positives at each cutoff and calculate precision and recall. A tied-score example checks equality with sklearn. I use the actual validation score thresholds returned by this `precision_recall_curve` as $\mathcal Q_{\mathrm{val}}$. Its extra endpoint at recall zero has no corresponding numeric cutoff, which is why the code excludes that final precision/recall entry when selecting $q^*$. The largest cutoff breaks an F1 tie, giving the stricter warning rule among tied candidates.
-
-F1 ignores true negatives, so correctly issuing no warning on many calm days cannot by itself produce a strong F1. It also does not tell me the personal cost of a false alarm or a missed bad day. I therefore show the counts and both precision and recall, rather than present the selected F1 as a complete definition of usefulness. A precision of 0.56 is an aggregate frequency among warned-about days, not a calibrated 56% probability attached to each warning.
-""")
-
-code(r"""
-from sklearn.metrics import precision_recall_curve as sklearn_precision_recall_curve
-
-def precision_recall_curve(actual_high, scores):
-    actual_high, scores = np.asarray(actual_high,dtype=bool), np.asarray(scores,dtype=float)
-    if actual_high.ndim!=1 or actual_high.shape!=scores.shape or not len(scores) or not np.isfinite(scores).all():
-        raise ValueError("Need aligned, finite binary outcomes and scores")
-    positives = int(actual_high.sum())
-    if not positives:
-        raise ValueError("This warning analysis needs at least one high target")
-    thresholds = np.unique(scores)
-    precision, recall = [], []
-    for cutoff in thresholds:
-        warning = scores>=cutoff
-        tp = int((warning & actual_high).sum())
-        precision.append(tp/int(warning.sum()))
-        recall.append(tp/positives)
-    # The final plot endpoint has no corresponding decision threshold.
-    return np.r_[precision,1.], np.r_[recall,0.], thresholds
-
-pr_example = ([False,True,True,False], [0.2,0.7,0.7,0.9])
-for custom,reference in zip(precision_recall_curve(*pr_example),sklearn_precision_recall_curve(*pr_example)):
-    np.testing.assert_allclose(custom,reference)
-
-
-warning_validation_predictions = {
-    "Persistence": validation_baselines["Persistence"],
-    "Ridge": ridge_development_predictions[ridge_feature_choice],
-    "Random forest": forest_validation_predictions[forest_feature_choice],
-}
-warning_cutoffs, cutoff_rows = {}, []
-validation_high = y_val.to_numpy() >= 6
-for name, scores in warning_validation_predictions.items():
-    precision, recall, cutoffs = precision_recall_curve(validation_high, scores)
-    f1 = np.divide(2 * precision[:-1] * recall[:-1], precision[:-1] + recall[:-1],
-                   out=np.zeros(len(cutoffs)), where=precision[:-1] + recall[:-1] > 0)
-    tied = np.flatnonzero(np.isclose(f1, f1.max(), rtol=0, atol=1e-12))
-    chosen = tied[-1]
-    warning_cutoffs[name] = float(cutoffs[chosen])
-    cutoff_rows.append({"Model": name, "Frozen cutoff": cutoffs[chosen], "Validation precision": precision[chosen],
-                        "Validation recall": recall[chosen], "Validation F1 (selected)": f1[chosen]})
-display(pd.DataFrame(cutoff_rows).set_index("Model").round(4))
-frozen_model_choices = {
-    "lookback": 7, "horizon": 1,
-    "ridge_features": ridge_feature_choice, "ridge_alpha_mean_error": float(ridge_alpha_choice),
-    "forest_features": forest_feature_choice, "forest_trees": FOREST_TREES,
-    "forest_config": forest_config_choice.copy(), "warning_cutoffs": warning_cutoffs.copy(),
-}
-print("Frozen development choices:", frozen_model_choices)
-""")
-
-md(r"""
-### 14.2 Refit once, then cache every final prediction
-
-The last development target, 31 December, is available on the first final issue evening, also 31 December. This satisfies the forecast-time check. Refit preprocessing uses only development inputs; the final rows are transformed without fitting. A newly observed 2026 rating may become history for the next evening's forecast, but never changes the fitted coefficients, trees or warning cutoffs.
-
-The mean baseline is recomputed from all development targets; persistence and the seven-day mean retain their documented missing-history fallbacks. I include both forest implementations in the regression scorecard, with the same frozen feature set, configuration and number of trees. The warning analysis uses the three main rules fixed above. Every plot and warning metric below reads the cached predictions from this cell; none retunes a model on final outcomes.
-
-The warning cutoffs were learned from validation forecasts made by the 899-row training fits. I now transfer those fixed cutoffs to the 1,083-row refits. Refit coefficients and trees can change the distribution of forecast scores, so the validation precision or F1 need not carry over. I evaluate that transfer as part of the fixed procedure rather than recalibrating the cutoffs on 2026.
-
-#### What changes during refitting?
-
-The selected ridge alpha remains about **0.0316228** in the mean-error convention. Its scikit-learn value changes from $899\alpha\approx28.4289$ to $1083\alpha\approx34.2475$ because the number of fitting rows changed. That is the same objective convention from Sections 7–10, not a new hyperparameter chosen from final performance. The imputation medians, scales and coefficients are then re-estimated using those 1,083 development examples. The forest similarly grows a fresh set of 60 trees from the development rows using the frozen depth, leaf-size and feature-sampling settings.
-
-At the first final issue evening, **31 December 2025**, the latest development target is already observed. The model can therefore use it for fitting before forecasting 1 January. On a later evening in 2026 it can receive the current rating and habits as inputs, but it does not refit itself from that day's outcome. The distinction is between updating the available history and updating learned parameters.
-
-The code aligns all cached predictions with target dates before scoring. Both missing final targets are excluded from every model's metric denominator, so none benefits from an easier subset. A missing **predictor** on an otherwise eligible issue date is handled by the fitted preprocessing or the baseline fallback, as before.
-
-#### Read the scorecard in the units of the question
-
-For the $m=282$ observed final targets, I report $\mathrm{MAE}=m^{-1}\sum_i|y_i-\widehat y_i|$ and $\mathrm{RMSE}=\sqrt{m^{-1}\sum_i(y_i-\widehat y_i)^2}$. Both are in anxiety points; RMSE gives large misses more influence. Persistence skill is
-
-$$1-\frac{\mathrm{MAE}_{\mathrm{model}}}{\mathrm{MAE}_{\mathrm{persistence}}}.$$
-
-An improvement here is an average over matched dates, not a promise that every forecast improves. Likewise, $R^2$ compares squared errors with the final outcomes' own mean. That evaluation mean is a mathematical reference, whereas the training-mean baseline is an actual forecast made from development data. Neither $R^2$ nor skill is a percentage of days classified correctly.
-""")
-
-code(r"""
-development_mask = target_dates <= VALIDATION_END
-final_mask = target_dates > VALIDATION_END
-X_development, y_development = X_features.loc[development_mask], y_next.loc[development_mask]
-X_final, y_final = X_features.loc[final_mask], y_next.loc[final_mask]
-assert target_dates.loc[X_development.index].max() <= X_final.index.min()
-assert X_development.index.intersection(X_final.index).empty
-assert y_development.notna().all() and y_final.notna().all()
-final_target_index = pd.DatetimeIndex(target_dates.loc[X_final.index], name="target_date")
-
-final_ridge_model = make_experiment_pipeline(ridge_alpha_choice, len(X_development)).fit(
-    X_development[ridge_columns_choice], y_development)
-final_forest_model = make_forest_pipeline(forest_config_choice).fit(X_development[forest_columns_choice], y_development)
-final_forest_imputer = final_forest_model.named_steps["imputer"]
-final_scratch_imputer = MedianStandardizerScratch(scale=False).fit(X_development[forest_columns_choice])
-np.testing.assert_allclose(final_scratch_imputer.transform(X_development[forest_columns_choice]),
-    final_forest_imputer.transform(X_development[forest_columns_choice]))
-final_scratch_forest = RandomForestRegressorScratch(n_estimators=FOREST_TREES, **forest_config_choice).fit(
-    final_scratch_imputer.transform(X_development[forest_columns_choice]), y_development)
-
-final_predictions = baseline_predictions(y_development, X_final, clean["anxiety_level"])
-final_predictions["Ridge"] = final_ridge_model.predict(X_final[ridge_columns_choice])
-final_predictions["Random forest"] = final_forest_model.predict(X_final[forest_columns_choice])
-final_predictions["Scratch forest"] = final_scratch_forest.predict(final_scratch_imputer.transform(X_final[forest_columns_choice]))
-final_predictions.index = final_target_index
-final_actual = pd.Series(y_final.to_numpy(), index=final_target_index, name="Observed")
-final_evaluator = ModelEvaluator(final_actual, final_predictions, final_predictions["Persistence"])
-final_scorecard = final_evaluator.metrics()
-display(final_scorecard.round(4))
-print(f"Refitted on {len(X_development):,} development targets; scored {len(final_actual)} final targets.")
-print("Final target dates:", final_target_index.min().date(), "to", final_target_index.max().date())
-print("Excluded final target ratings:", int(clean.loc[final_target_index.min():final_target_index.max(), "anxiety_level"].isna().sum()))
-print("Raw final ridge predictions outside 0–10:", int(((final_predictions["Ridge"] < 0) | (final_predictions["Ridge"] > 10)).sum()))
-""")
-interp("final_scorecard")
-
-code(r"""
-final_calendar = pd.date_range(final_actual.index.min(), final_actual.index.max(), freq="D")
-fig, axes = plt.subplots(3, 1, figsize=(10, 7.5), sharex=True, sharey=True)
-for ax, name, color in zip(axes, ["Persistence", "Ridge", "Random forest"], [ORANGE, BLUE, "#16877d"]):
-    ax.plot(final_calendar, final_actual.reindex(final_calendar), color=INK_2, linewidth=1, alpha=0.65, label="Observed")
-    ax.plot(final_calendar, final_predictions[name].reindex(final_calendar), color=color, linewidth=1.5, label=name)
-    ax.set_ylim(-0.4, 10.4)
-    ax.set_ylabel("Anxiety")
-    ax.set_title(name, fontsize=11, pad=8)
-    ax.legend(loc="upper left", ncol=2, fontsize=9)
-axes[-1].set_xlim(final_calendar.min(), final_calendar.max())
-axes[-1].xaxis.set_major_locator(mdates.MonthLocator(interval=2))
-axes[-1].xaxis.set_major_formatter(mdates.DateFormatter("%b %Y"))
-axes[-1].set_xlabel("Target date · gaps preserve missing target ratings")
-fig.suptitle("2026 one-day-ahead forecasts with frozen model choices", fontsize=13, weight="bold")
-fig.tight_layout(rect=(0, 0, 1, 0.96), h_pad=1.5)
-plt.show()
-
-final_error_levels = pd.DataFrame({"n": final_actual.groupby(final_actual).size()})
-for name in ["Ridge", "Random forest"]:
-    table = final_evaluator.errors_by_level(name)
-    final_error_levels[f"{name} MAE"] = table["MAE"]
-    final_error_levels[f"{name} bias"] = table["Bias"]
-display(final_error_levels.round(3))
-fig, ax = plt.subplots(figsize=(8.5, 4.3))
-levels = final_error_levels.index.to_numpy()
-ax.bar(levels - 0.18, final_error_levels["Ridge bias"], width=0.35, color=BLUE, label="Ridge")
-ax.bar(levels + 0.18, final_error_levels["Random forest bias"], width=0.35, color="#16877d", label="Random forest")
-ax.axhline(0, color=INK_2, linewidth=1)
-ax.set_xticks(levels, [f"{int(level)}\nn={int(final_error_levels.loc[level, 'n'])}" for level in levels])
-ax.set_xlabel("Observed anxiety level and sample count")
-ax.set_ylabel("Mean prediction − observation (points)")
-ax.set_title("Do the models underpredict high-anxiety days in 2026?", pad=14)
-ax.legend()
-ax.grid(axis="x", visible=False)
-fig.tight_layout()
-plt.show()
-""")
-interp("final_error_patterns")
-
-md(r"""
-### 14.3 High-day warnings and episode recall
-
-Day-level precision and recall treat every observed day as one target. I also want to know whether warnings cover sustained runs of anxiety. An **episode** is at least two consecutive calendar days with observed ratings $\geq6$. Missing ratings break an observed run; I do not fill them or compress time.
-
-I identify runs on the full daily calendar, then retain episodes whose onset falls inside the final period. This avoids treating a run that began in December as a new January onset. A run ending at the file boundary may be right-censored; these are observed episodes, not a complete clinical event history.
-
-**Episode recall** is the fraction of these episodes with at least one warning for a target day inside the run. That warning can occur after onset, so it is coverage rather than guaranteed early detection. **Onset recall** is stricter: a warning must predict the first day of the **observed high run**, issued the evening before. If the preceding rating is missing, this observed-run start is not a confirmed new onset; the run could be continuing across a gap. I retain the declared missing-gap rule and discuss that ambiguity in the results. Neither metric gives extra credit for many warnings within the same episode.
-
-The precision–recall curves below describe the cached final regression scores. The marked operating points use the cutoffs already fixed on 2025 validation. I will not pick a better-looking point from these final curves.
-
-#### Define the episode denominators explicitly
-
-Let $E_1,\ldots,E_K$ be the qualifying observed runs, and let $o_k$ be the first target date in run $E_k$. With the frozen cutoff, the metrics are
-
-$$\mathrm{EpisodeRecall}=\frac1K\sum_{k=1}^K\mathbb 1\!\left\{\sum_{i\in E_k}A_i\geq1\right\},
-\qquad
-\mathrm{ObservedOnsetRecall}=\frac1K\sum_{k=1}^K A_{o_k}.$$
-
-Each run contributes at most one success to each metric. This differs from day-level recall, where a ten-day run can contribute ten high targets. A model could therefore cover many episodes while missing many high days inside them, or cover one long episode repeatedly and still miss other runs.
-
-For a two-day high run, persistence can miss the first day and warn for the second by copying the first day's high rating. Its episode recall can then be perfect even though it gave no warning of the observed start. Reporting both measures prevents that lagging behavior from being mistaken for successful onset prediction.
-
-The implementation creates run identifiers on the complete daily calendar **before** selecting the high rows, so a missing or low day separates runs. It requires at least two consecutive observed high dates, retains starts inside the final period, and then checks the cached warning Series on each run's dates. It never forward-fills the target to create an episode. The baseline can still forward-fill an absent input when making a forecast; that is a separate policy whose effect must remain visible.
-
-The curve's horizontal reference is the final high-day prevalence. Warnings unrelated to outcomes would, on average, have precision near that prevalence rather than near one. Moving along a curve changes the cutoff; it does not refit the regression model. I show the full curves to describe the tradeoff, but only the preselected dots are the evaluated operating choices. A favorable-looking section of the final curve is not permission to choose a new cutoff and call its score independently tested.
-""")
-
-code(r"""
-observed_high = clean["anxiety_level"].ge(6) & clean["anxiety_level"].notna()
-run_ids = observed_high.ne(observed_high.shift(fill_value=False)).cumsum()
-episode_rows = []
-for _, run in observed_high.loc[observed_high].groupby(run_ids.loc[observed_high]):
-    if len(run) >= 2 and final_actual.index.min() <= run.index.min() <= final_actual.index.max():
-        episode_rows.append({"Onset": run.index.min(), "End": run.index.max(), "Observed days": len(run),
-                             "At file boundary": run.index.max() == clean.index.max()})
-final_episodes = pd.DataFrame(episode_rows, columns=["Onset", "End", "Observed days", "At file boundary"])
-final_high = final_actual.ge(6)
-warning_rows = []
-for name, cutoff in warning_cutoffs.items():
-    warnings_for_days = final_predictions[name].ge(cutoff)
-    tp = int((warnings_for_days & final_high).sum())
-    fp = int((warnings_for_days & ~final_high).sum())
-    fn = int((~warnings_for_days & final_high).sum())
-    covered, onset_warned = [], []
-    for episode in final_episodes.itertuples(index=False):
-        covered.append(bool(warnings_for_days.loc[episode.Onset:episode.End].any()))
-        onset_warned.append(bool(warnings_for_days.loc[episode.Onset]))
-    warning_rows.append({"Model": name, "Frozen cutoff": cutoff, "Warning days": int(warnings_for_days.sum()),
-                         "TP": tp, "FP": fp, "FN": fn,
-                         "Precision": tp / (tp + fp) if tp + fp else np.nan,
-                         "Recall": tp / (tp + fn) if tp + fn else np.nan,
-                         "F1": 2 * tp / (2 * tp + fp + fn) if 2 * tp + fp + fn else np.nan,
-                         "Episode recall": np.mean(covered) if covered else np.nan,
-                         "Onset recall": np.mean(onset_warned) if onset_warned else np.nan})
-final_warning_scores = pd.DataFrame(warning_rows).set_index("Model")
-display(final_warning_scores.round(4))
-print(f"Observed high days: {int(final_high.sum())}/{len(final_high)}; onset-in-period episodes of at least two days: {len(final_episodes)}.")
-display(final_episodes)
-
-fig, ax = plt.subplots(figsize=(8, 4.8))
-for name, color in [("Persistence", ORANGE), ("Ridge", BLUE), ("Random forest", "#16877d")]:
-    precision, recall, _ = precision_recall_curve(final_high, final_predictions[name])
-    ax.step(recall, precision, where="post", color=color, label=name)
-    point = final_warning_scores.loc[name]
-    ax.scatter(point["Recall"], point["Precision"], color=color, edgecolor="white", s=65, zorder=4)
-ax.axhline(final_high.mean(), color=MUTED, linestyle="--", label="High-day prevalence")
-ax.set_xlim(0, 1.02)
-ax.set_ylim(0, 1.02)
-ax.set_xlabel("Recall of observed high-anxiety days")
-ax.set_ylabel("Precision of warnings")
-ax.set_title("2026 precision–recall curves\nDots use cutoffs fixed on 2025 validation", pad=14)
-ax.legend(fontsize=9)
-fig.tight_layout()
-plt.show()
-""")
-interp("final_warnings")
-
-md(r"""
-### 14.4 What is fixed after this evaluation
-
-The final results describe the frozen forecasting procedures above on this recorded 2026 period. I will not use their relative ranking or warning curves to retune and then present the revised result as another untouched test. Differences between validation and final performance are part of what the chronological evaluation is meant to reveal.
-
-Average regression error, errors on high days and episode warnings answer different questions; no single score settles all three. The predictions are forecasts of my self-rating, not diagnoses, treatment recommendations or causal estimates of changing a habit. Earlier descriptive inspection of 2026 remains a limitation.
-
-For my personal question, I need to read these results alongside the ablations. The final selected models improve on persistence by a small average amount. That is useful evidence about forecasting, but it does not isolate the contribution of habits: Section 12 favored history in training-CV, while the later validation comparison slightly favored full inputs. I should carry that mixed evidence into the discussion rather than turn a positive final skill score into “my lifestyle explains the improvement.” The earlier ablations, severe-day errors and warning tradeoffs all belong in the answer.
-
-**Next, Section 15:** examine coefficient uncertainty with a Gaussian linear-model posterior and a moving-block bootstrap, distinguishing their assumptions and interval meanings. This uncertainty analysis must not quietly become a new round of test-driven model selection.
-""")
-
-
-md(r"""
-## 15. How confident am I in the ridge coefficients?
-
-A coefficient table gives me one fitted answer. It does not tell me how much that answer might change if I had recorded another stretch of days. Before turning a sleep or exercise weight into a story about myself, I want to ask how stable it is.
-
-I use two approaches because they answer different questions. First, I calculate a Gaussian posterior exactly under a stated linear model. Then I refit ridge on resampled stretches of my journal. The first describes uncertainty inside a probability model; the second describes sensitivity to the observed series. Neither turns a predictive coefficient into the causal effect of changing a habit.
-
-Both analyses use the **1,083 pre-2026 development targets**, the already selected full feature set and the frozen ridge alpha. I do not revisit the 2026 predictions, select a new feature set or tune a new model from these intervals. The coefficients here belong to the development refit from Section 14, so their values need not equal the original 899-row fit in Section 10.
-
-### 15.1 From a loss function to a probability model
-
-Let $Z$ be the development features after median imputation and standardization, and let $y$ contain tomorrow's observed ratings. The likelihood is
-
-$$y_i=b+z_i^\top w+\epsilon_i,\qquad \epsilon_i\overset{\mathrm{iid}}\sim\mathcal N(0,\sigma^2).$$
-
-This assumes that, after accounting for the features, the remaining errors are independent, Gaussian and have a constant variance. Correlated inputs do not themselves violate independent errors; the important question is what dependence remains in the errors. Those are strong assumptions for daily self-ratings, especially with a bounded 0–10 scale.
-
-I put a zero-centered Gaussian prior on the slopes,
-
-$$w\sim\mathcal N(0,\tau^2I),\qquad p(b)\propto1.$$
-
-The prior prefers moderate weights without declaring that every habit is irrelevant. The intercept has a flat prior so that it is not pulled toward zero. This matches our unpenalized ridge intercept. Here $\tau^2$ has units of squared rating points per squared standardized input unit.
-
-Ignoring constants, the negative log posterior is
-
-$$-\log p(w,b\mid Z,y)=\frac{\|y-b\mathbf1-Zw\|^2}{2\sigma^2}+\frac{\|w\|^2}{2\tau^2}+C.$$
-
-Multiply by $2\sigma^2/n$. The minimizer is unchanged, and the result is exactly our ridge objective when
-
-$$\frac1n\|y-b\mathbf1-Zw\|^2+\alpha\|w\|^2,
-\qquad \boxed{\alpha=\frac{\sigma^2}{n\tau^2}}.$$
-
-The factor $n$ matters: our loss averages squared errors, while scikit-learn's ridge uses their sum. Thus $\sigma^2/\tau^2=n\alpha$, the same penalty conversion used throughout the notebook. This probability interpretation of ridge follows [van Wieringen's lecture notes](https://arxiv.org/abs/1509.09169).
-""")
-
-md(r"""
-### 15.2 Complete the square, then calculate the posterior
-
-Center the columns and outcome: $Z_c=Z-\bar z$ and $y_c=y-\bar y$. Integrating out the flat-prior intercept gives the penalized cross-product matrix
-
-$$A=Z_c^\top Z_c+n\alpha I.$$
-
-The posterior precision (inverse covariance) is $A/\sigma^2$, not $A$ itself.
-
-Expanding the quadratic in $w$ and completing the square gives
-
-$$w\mid Z,y,\sigma^2,\tau^2\sim\mathcal N(\mu,\Sigma),\qquad
-\mu=A^{-1}Z_c^\top y_c,\qquad \Sigma=\sigma^2A^{-1}.$$
-
-So the posterior mean and mode both equal ridge's fitted slopes. This is an exact matrix calculation for the stated conditional model; it does not need posterior simulation. I use `solve(A, ...)` rather than explicitly inverting $A$. A positive alpha makes $A$ positive definite even when history columns overlap.
-
-For coefficient $j$, a marginal 95% credible interval is
-
-$$\mu_j\pm1.96\sqrt{\Sigma_{jj}}.$$
-
-Conditional on the model, fixed preprocessing and the supplied variance/prior parameters, the posterior assigns approximately 95% probability to this interval. These are individual intervals, not simultaneous 95% coverage for the whole table.
-
-**Where does $\sigma^2$ come from?** I use the development fit's mean squared residual, $\hat\sigma^2=\mathrm{RSS}/n$, as a transparent plug-in value, then set $\tau^2=\hat\sigma^2/(n\alpha)$. This is not an unbiased noise-variance estimator for regularized regression, and it can absorb model bias. If I multiplied the assumed variance by a factor $c$ while preserving $\sigma^2/\tau^2=n\alpha$, the posterior mean would stay the same and interval widths would multiply by $\sqrt c$. Their absolute widths therefore depend on this plug-in choice. Alpha and the variance are estimated from data; their uncertainty is not integrated out. The posterior is therefore exact **conditional on these plug-in choices**, rather than a fully Bayesian analysis of the entire model-selection process.
-
-The code also checks that the posterior mean recovers the development ridge coefficients, and that its covariance is symmetric and positive definite. A posterior interval about a coefficient is not a prediction interval for tomorrow: a future observed rating would include residual noise as well as uncertainty in the fitted mean.
-""")
-
-code(r"""
-# Read the frozen development fit; do not refit or score any final-period model.
-u_columns = list(ridge_columns_choice)
-u_X = X_development[u_columns].copy()
-u_y = y_development.to_numpy(dtype=float)
-u_model = final_ridge_model
-u_imputer = u_model.named_steps["imputer"]
-u_scaler = u_model.named_steps["scaler"]
-u_scratch_preprocessing = MedianStandardizerScratch().fit(u_X)
-u_Z = u_scratch_preprocessing.transform(u_X)
-np.testing.assert_allclose(u_Z,u_scaler.transform(u_imputer.transform(u_X)),atol=1e-12)
-u_n, u_d = u_Z.shape
-u_alpha = float(ridge_alpha_choice)
-assert u_alpha > 0 and u_n == 1083
-assert target_dates.loc[u_X.index].max() <= pd.Timestamp("2025-12-31")
-u_Zc = u_Z - u_Z.mean(axis=0)
-u_yc = u_y - u_y.mean()
-u_A = u_Zc.T @ u_Zc + u_n * u_alpha * np.eye(u_d)
-u_mean = np.linalg.solve(u_A, u_Zc.T @ u_yc)
-u_intercept = u_y.mean() - u_Z.mean(axis=0) @ u_mean
-u_residuals = u_y - (u_intercept + u_Z @ u_mean)
-u_sigma2 = float(np.mean(u_residuals ** 2))
-u_tau2 = u_sigma2 / (u_n * u_alpha)
-u_cov = u_sigma2 * np.linalg.solve(u_A, np.eye(u_d))
-u_se = np.sqrt(np.diag(u_cov))
-np.testing.assert_allclose(u_mean, u_model.named_steps["ridge"].coef_, atol=1e-10)
-np.testing.assert_allclose(u_intercept, u_model.named_steps["ridge"].intercept_, atol=1e-10)
-np.testing.assert_allclose(u_cov, u_cov.T, atol=1e-12)
-assert np.linalg.eigvalsh(u_cov).min() > 0
-print(f"Development rows: {u_n}; slopes: {u_d}; alpha: {u_alpha:.7f}")
-print(f"Plug-in residual variance: {u_sigma2:.4f}; prior variance: {u_tau2:.5f}")
-print(f"sigma²/tau² = {u_sigma2/u_tau2:.5f}; n*alpha = {u_n*u_alpha:.5f}")
-posterior_table = pd.DataFrame({"Development ridge": u_mean,
-    "Posterior SD": u_se, "Credible lower": u_mean - 1.96*u_se,
-    "Credible upper": u_mean + 1.96*u_se}, index=u_columns)
-display(posterior_table.round(4))
-
-# Calendar alignment matters: correlation uses pairs exactly lag days apart.
-u_residual_calendar = pd.Series(u_residuals,
-    index=pd.DatetimeIndex(target_dates.loc[u_X.index])).asfreq("D")
-u_residual_acf = pd.Series({lag: u_residual_calendar.corr(u_residual_calendar.shift(lag))
-                            for lag in range(1, 15)}, name="Residual correlation")
-fig, ax = plt.subplots(figsize=(8, 3.2))
-ax.bar(u_residual_acf.index, u_residual_acf, color=BLUE, width=0.65)
-ax.axhline(0, color=MUTED, linewidth=0.8)
-ax.set(xticks=[1, 3, 7, 14], xlabel="Calendar lag (days)", ylabel="Residual correlation",
-       title="What dependence remains after the development ridge fit?")
-fig.tight_layout()
-plt.show()
-print("Residual correlations at lags 1, 7, 14:", u_residual_acf.loc[[1,7,14]].round(3).to_dict())
-""")
-
-md(r"""
-### 15.3 Resample stretches of days, not isolated rows
-
-An ordinary pairs bootstrap samples individual $(x_t,y_t)$ rows. That breaks the ordering that allows neighboring forecast examples to share history and outcomes. Instead, I use a **moving-block pairs bootstrap**: select an overlapping stretch of 14 consecutive calendar positions, then another, until I have the original calendar length. This preserves local relationships within blocks and breaks them at block joins. The rationale and dependence assumptions are discussed by [Politis](https://mathweb.ucsd.edu/~politis/impactBOOT.pdf).
-
-Here is the procedure for one replicate:
-
-1. Place the eligible development examples on their complete **target-date calendar**. A missing target remains a missing position.
-2. Sample block starts uniformly from all possible 14-day starts, with replacement. Concatenate the position blocks and truncate to the original calendar length.
-3. Remove sampled positions that have no eligible target. Keep each remaining feature–target pair together, including repeated rows.
-4. Fit a fresh scratch median/standardization transformer and `RidgeScratch` using the frozen alpha. Store its coefficients, expressed in common units. These refits use the direct normal-equation calculation from Section 10, not sklearn's ridge solver.
-
-I repeat this **1,000 times**, with a fixed seed. The percentile interval is
-
-$$[q_{0.025}(\hat w_j^*),\ q_{0.975}(\hat w_j^*)].$$
-
-This is a nominal bootstrap confidence interval: it approximates repeated-sample uncertainty under the resampling assumptions. It is not a posterior probability interval, and it is not guaranteed to attain 95% coverage here. Regularization bias, nonstationarity and a finite number of blocks can affect it. The replicates directly describe variation of this regularized fitting procedure; their percentile endpoints are not automatically valid confidence limits for an unpenalized population slope. I do not call the fraction of positive replicates a Bayesian probability that the sign is correct.
-
-**Keep the units comparable.** Each bootstrap has its own scale $s_j^*$. I convert its standardized coefficient back to a raw-input slope, then express it per original development standard deviation $s_j$:
-
-$$\tilde w_j^*=\frac{\hat w_j^*}{s_j^*}\,s_j.$$
-
-Without this conversion, a change in coefficient could just reflect a change in the scaler. Imputation is refitted too; the posterior instead conditions on the original preprocessing. The two intervals therefore differ in more than their treatment of time dependence.
-
-**Why not rebuild lags after joining blocks?** I resample already constructed causal forecast pairs. Rebuilding features across unrelated block joins would invent histories that were never observed. This is inference about the frozen feature-based learning procedure, not a simulation of new daily trajectories. The blocks retain missing-target positions before filtering, so two observed dates separated by a gap are never silently made consecutive.
-
-Fourteen days is a declared working choice, not an estimated optimal length. Seven- and 28-day sensitivity runs use 400 replicates each. I report their widths without choosing whichever gives the most attractive conclusion. Sampling counts can vary because blocks include different numbers of missing targets; each refit's summed-loss penalty is therefore $n^*\alpha$.
-""")
-
-code(r"""
-# Build a calendar-position -> eligible development-row lookup.
-u_target_index = pd.DatetimeIndex(target_dates.loc[u_X.index])
-u_calendar = pd.date_range(u_target_index.min(), u_target_index.max(), freq="D")
-u_lookup = pd.Series(np.arange(u_n), index=u_target_index).reindex(u_calendar)
-u_row_lookup = u_lookup.fillna(-1).to_numpy(dtype=int)
-assert len(u_calendar) - u_n == int(u_lookup.isna().sum())
-
-def moving_block_rows(row_lookup, block_days, rng):
-    "Sample calendar blocks, then remove ineligible target positions."
-    total = len(row_lookup)
-    if not 1 <= block_days <= total:
-        raise ValueError("Block length must fit inside the calendar")
-    starts = rng.integers(0, total - block_days + 1,
-                          size=int(np.ceil(total / block_days)))
-    positions = (starts[:, None] + np.arange(block_days)).ravel()[:total]
-    rows = row_lookup[positions]
-    return rows[rows >= 0], positions
-
-def bootstrap_ridge_coefficients(block_days, replicates, seed):
-    rng = np.random.default_rng(seed)
-    coefficients, sample_sizes = [], []
-    for _ in range(replicates):
-        rows, _ = moving_block_rows(u_row_lookup, block_days, rng)
-        processing = MedianStandardizerScratch().fit(u_X.iloc[rows])
-        fit = RidgeScratch(u_alpha).fit(processing.transform(u_X.iloc[rows]),u_y[rows])
-        raw_slopes = fit.coef_ / processing.scale_
-        coefficients.append(raw_slopes * u_scratch_preprocessing.scale_)
-        sample_sizes.append(len(rows))
-    return np.asarray(coefficients), np.asarray(sample_sizes)
-
-# Check that blocks really contain adjacent calendar positions and repeat by seed.
-test_rows, test_positions = moving_block_rows(u_row_lookup, 14, np.random.default_rng(156))
-again_rows, again_positions = moving_block_rows(u_row_lookup, 14, np.random.default_rng(156))
-np.testing.assert_array_equal(test_positions, again_positions)
-np.testing.assert_array_equal(test_rows, again_rows)
-assert (test_rows >= 0).all() and (test_rows < u_n).all()
-for start in range(0, len(test_positions), 14):
-    assert np.all(np.diff(test_positions[start:start+14]) == 1)
-
-u_bootstrap, u_boot_sizes = bootstrap_ridge_coefficients(14, 1000, 156)
-assert u_bootstrap.shape == (1000, u_d) and np.isfinite(u_bootstrap).all()
-u_lower, u_upper = np.quantile(u_bootstrap, [0.025, 0.975], axis=0)
-uncertainty_table = posterior_table.copy()
-uncertainty_table["Block lower"] = u_lower
-uncertainty_table["Block upper"] = u_upper
-uncertainty_table["Posterior width"] = 3.92*u_se
-uncertainty_table["Block width"] = u_upper-u_lower
-uncertainty_table["Width ratio"] = (u_upper-u_lower)/(3.92*u_se)
-uncertainty_table["Posterior excludes zero"] = (u_mean-1.96*u_se > 0) | (u_mean+1.96*u_se < 0)
-uncertainty_table["Block excludes zero"] = (u_lower > 0) | (u_upper < 0)
-display(uncertainty_table.round(4))
-print(f"Calendar positions: {len(u_calendar)}; excluded target positions: {int(u_lookup.isna().sum())}")
-print(f"Bootstrap usable rows: {u_boot_sizes.min()}–{u_boot_sizes.max()}; median {np.median(u_boot_sizes):.0f}")
-
-sensitivity_rows = []
-for length, count in [(7, 400), (14, 1000), (28, 400)]:
-    draws = u_bootstrap if length == 14 else bootstrap_ridge_coefficients(length, count, 156+length)[0]
-    lower, upper = np.quantile(draws, [0.025, 0.975], axis=0)
-    sensitivity_rows.append({"Block days": length, "Replicates": count,
-        "Median interval width": np.median(upper-lower),
-        "Slopes excluding zero": int(((lower>0)|(upper<0)).sum())})
-u_sensitivity = pd.DataFrame(sensitivity_rows).set_index("Block days")
-display(u_sensitivity.round(4))
-""")
-
-md(r"""
-### 15.4 Read the intervals before making a claim
-
-The next plot separates the core anxiety-history coefficients, the habit coefficients and the calendar/missingness coefficients. Blue lines are conditional posterior credible intervals, orange lines are block-bootstrap percentile confidence intervals. The blue dot is the development ridge estimate; the orange dot is the bootstrap median. A shift between the dots is possible because the bootstrap refits the procedure on a different empirical distribution. A line crossing zero means that this individual interval does not resolve the sign under that method; it does not prove a zero effect.
-
-For a nonconstant binary flag, the coefficient is still per development standard deviation, not the entire 0-to-1 transition. A large missingness coefficient can reflect a sparse pattern rather than a dependable personal insight. Also, the current rating and its rolling means overlap: uncertainty in one conditional coefficient is not uncertainty in the predictive contribution of the entire history group. The ablations remain the better direct test of that group question.
-""")
-
-code(r"""
-core_history = [c for c in u_columns if c == "anxiety_today" or c.startswith("anxiety_mean_")]
-# Keep observed habits together; show missingness companions in their own panel.
-core_habits = [c for c in u_columns if feature_dictionary.loc[c, "domain"] in
-               ["sleep", "exercise", "socializing"] and "missing" not in c]
-other_inputs = [c for c in u_columns if c not in core_history + core_habits]
-fig, axes = plt.subplots(3, 1, figsize=(9, 11), gridspec_kw={"height_ratios": [3, 5, 9]})
-for ax, columns, title in zip(axes, [core_history, core_habits, other_inputs],
-                            ["Anxiety history", "Recorded habits and sleep shortfall", "Calendar and observation pattern"]):
-    for position, name in enumerate(columns):
-        row = uncertainty_table.loc[name]
-        ax.plot([row["Credible lower"], row["Credible upper"]], [position-.13]*2, color=BLUE, linewidth=2.5)
-        ax.scatter(row["Development ridge"], position-.13, color=BLUE, s=24, zorder=3)
-        ax.plot([row["Block lower"], row["Block upper"]], [position+.13]*2, color=ORANGE, linewidth=2.5)
-        ax.scatter(np.median(u_bootstrap[:, u_columns.index(name)]), position+.13, color=ORANGE, s=24, zorder=3)
-    ax.axvline(0, color=MUTED, linestyle="--", linewidth=1)
-    ax.set_yticks(range(len(columns)), [c.replace("_", " ") for c in columns], fontsize=9)
-    ax.set_ylim(len(columns)-.5, -.5)
-    ax.set_title(title, pad=10)
-    ax.grid(axis="y", visible=False)
-    ax.set_xlabel("Rating points per development standard deviation of the input")
-fig.legend(handles=[Line2D([0],[0],color=BLUE,marker="o",label="95% conditional credible interval"),
-                    Line2D([0],[0],color=ORANGE,marker="o",label="95% block-bootstrap percentile interval")],
-           loc="lower center", ncol=1, bbox_to_anchor=(.57,.005), fontsize=9)
-fig.suptitle("How stable are the ridge slopes?\nPre-2026 data only; intervals have different assumptions", fontsize=14, y=.995)
-fig.tight_layout(rect=(0,.065,1,.95), h_pad=2)
-plt.show()
-print("Core habit rows:")
-display(uncertainty_table.loc[core_habits, ["Development ridge", "Credible lower", "Credible upper",
-    "Block lower", "Block upper", "Width ratio"]].round(4))
-""")
-interp("uncertainty_results")
-
-md(r"""
-### 15.5 What these calculations leave unresolved
-
-The posterior treats the imputed design, chosen alpha and plug-in variance as fixed. The bootstrap refits preprocessing but still holds the feature design and alpha fixed. Neither repeats the full search over windows, horizons and feature sets, so neither includes all the uncertainty introduced by those development decisions. Neither produces simultaneous intervals for seventeen claims.
-
-Block resampling assumes a reasonably stable, weakly dependent process across the development period. My circumstances may have changed over almost three years, and fourteen-day blocks do not preserve long episodes or long-term drift. The seven- and 28-day checks show sensitivity to one modeling choice; they do not establish that any chosen length captures all dependence. Feature histories also overlap block boundaries in the original pairs, so resampling retains that finite-history information without reconstructing a full generative time-series model.
-
-Most importantly, a wider bootstrap interval would not by itself prove that autocorrelation caused the difference: prior shrinkage, changing inputs, preprocessing variation and the different interval constructions also matter. A narrower one would not disprove temporal dependence. The residual correlation plot is descriptive evidence, without iid significance bands, and an in-sample fit can hide some dependence.
-
-My practical rule is modest: I can describe a fitted conditional relationship and its sensitivity, but I should not turn the sign of a small habit coefficient into advice about how to live. A forecast coefficient is not a verdict on whether a habit helps me.
-""")
-
-md(r"""
-## 16. What I learned from my own journal
-
-### 16.1 Answering the question I started with
-
-I began with a personal hope: that the habits I have been recording would help me understand tomorrow's anxiety. The notebook gives me a more specific answer than “habits matter” or “habits do not matter.” **Recent anxiety is useful for forecasting, and the selected models modestly improve on copying today's rating. The extra predictive value of these recorded habits is less consistent.**
-
-On the 282 observed 2026 targets, persistence has MAE **1.6206**, ridge **1.5373**, and the sklearn forest **1.5460**. Ridge reduces average absolute error by about **0.0833 points, or 5.1%**, relative to persistence. That is a real observed improvement in this evaluation, but it is small beside the typical error of roughly one and a half points. The 0.0087-point difference between ridge and the forest is too small to turn their ordering into a broad claim about which family is best.
-
-The habit question needs the ablations, not just that final scorecard. Section 12's nested training-period comparison favors history plus calendar over the full ridge: **1.3873 versus 1.4134 MAE**. The later 2025 validation comparison slightly favors the full ridge, **1.2955 versus 1.3121**, and the full forest improves on its history version by about **0.0096 points**. Those small, changing differences do not establish a stable contribution from the recorded lifestyle features. The final test compares the procedures selected during development; it does not contain a new history-only ablation that would isolate habits on 2026.
-
-This does not tell me that sleep, exercise or seeing people are unimportant in my life. A useful habit can be hard to detect in tomorrow's forecast if its information is already reflected in today's anxiety, if the measurements are coarse, or if its relationship changes over time. Those are possible explanations, not findings established by this analysis. I can say what these representations and evaluation periods supported without making a bigger claim about myself.
-
-### 16.2 The comparisons changed how I judged the models
-
-| Comparison | What it tested | What I can take from it |
-|---|---|---|
-| C1: ridge feature ablation | Do habits add beyond recent anxiety and calendar? | No improvement in the nested training comparison; later validation gives a small, different ranking. |
-| C2: forest and forest ablation | Do thresholds and interactions improve the forecast? | They can be represented, but the selected forest does not beat ridge's final average error; lifestyle gains are small on validation. |
-| C3: shuffled versus chronological CV | Does the evaluation match forecasting into the future? | Shuffled fitting uses later dates to predict earlier ones; expanding folds match the intended direction. The observed score difference is a diagnostic, not a universal correction factor. |
-| C4: windows and horizons | How much history, and how far ahead? | Tomorrow remains the task; the three-versus-seven-day window difference is tiny, while three-day forecasts have larger absolute errors. |
-
-The from-scratch implementations helped me connect these comparisons to the math. Ridge's closed form and gradient descent recover the same fitted solution when preprocessing, intercept handling and alpha normalization match. A tree's split reduces within-leaf squared error, and averaging randomized trees reduces some instability. Correct implementation is necessary, but it does not guarantee that a more complex model forecasts better.
-
-Section 15 finds positive current-anxiety and three-day-mean slopes under both interval methods. Most individual habit intervals cross zero; sleep quality is the exception, with a positive conditional slope that does not identify a causal effect. The block intervals are not systematically wider than the conditional posterior intervals, and the plotted residual correlations are small. Reporting that unexpected result is more useful than making the output fit my initial expectation.
-
-There is one more distinction I need to keep in mind: a coefficient can have a reasonably stable conditional sign without demonstrating useful incremental prediction, and an uncertain individual coefficient can sit inside a useful group of correlated features. That is why I read Section 15 together with the ablations rather than using intervals as a replacement for evaluation.
-
-### 16.3 Predicting an average day is different from anticipating a bad one
-
-The average-error improvement does not mean that the models capture severe days well. At observed anxiety level 8, ridge underpredicts by **2.296 points on average**; at level 9, by **3.599**. These groups have only 15 and 7 days respectively. The models also overpredict many low days. Their forecasts smooth the extremes, which can look reasonable on a time plot while missing the severity of particular days.
-
-Turning the forecasts into warnings makes the tradeoff visible. With the cutoff fixed on 2025 validation, ridge catches **51 of 72** high days, compared with persistence's **46**. It also produces **40 false alarms**, compared with **26**. Five additional detected high days therefore come with fourteen additional false alarms in this final period. Persistence has the higher final F1, while ridge has the higher recall. Which tradeoff is preferable depends on what a warning is meant to trigger; the notebook has not established a real-world decision policy.
-
-Episode coverage needs even more care. Persistence covers all **15** qualifying observed runs, largely because it can warn after a run has already started. Ridge warns before **6 of the 15 observed run starts**, but missing ratings make some boundaries ambiguous, including the 5 April run. These are descriptive warning metrics for this journal, not evidence of dependable anticipation of new episodes. I would not treat the forecasts as a diagnosis or use them to decide treatment.
-
-### 16.4 What limits the conclusion
-
-**This is one person's record.** Repeated days give me a substantial series, but not 1,380 independent people. The results concern my ratings over these periods; they do not establish performance for someone else. The 0–10 outcome is a self-rating, and equal numerical gaps are an approximation that makes regression possible rather than a proven measurement law.
-
-**The records and preprocessing involve choices.** My original journal is in Arabic, followed by Claude-assisted translation and CSV merging. I checked roughly 120 days against the originals and found them consistent. That sample check supports the translation, but does not establish that every entry is correct. Parsing checks make numeric and date handling more transparent, but cannot prove that every translated entry perfectly preserves the original meaning. Range checks catch impossible values rather than every plausible transcription error. I leave missing targets unfilled; input imputation, coverage flags and the sleep-shortfall recurrence still impose documented modeling choices.
-
-**Timing matters.** The forecasting interpretation assumes each issue evening's inputs are known before the next target evening. Date order alone cannot verify recording times or later revisions. The features use only the permitted history in code, but the raw recording process remains part of the assumptions.
-
-**The series and the analysis can change over time.** Habits, circumstances and rating patterns need not be stationary. A chronological split is a more appropriate check than random mixing, but one final period cannot represent every future period. I also explored 2026 descriptively in Section 5 before the final model evaluation. It was excluded from fitting and tuning here, but was not completely unseen. Trying multiple development choices creates selection uncertainty that the coefficient intervals do not fully capture.
-
-**Prediction is not intervention.** Sleep, exercise, socializing and anxiety may influence one another and share unmeasured causes. Controlling for recent anxiety can absorb information through which an earlier habit might operate. Neither a coefficient, a correlation nor a removal ablation identifies what would happen if I deliberately changed a habit. The notebook therefore cannot confirm or refute the broad therapeutic claim that motivated me. It also does not answer whether several poor nights have an effect beyond the sum of individual nights: the decay score builds in accumulation, and removing the whole sleep domain does not isolate that recurrence or test a nonlinear dose response.
-""")
-
-md(r"""
-### 16.5 Would a different loss improve MAE?
-
-There is a sensible alternative I can check without pretending that a bigger model must be better. Squared loss targets a conditional mean, while absolute loss targets a conditional median. Since MAE is my primary score, **median regression** is worth checking. At quantile 0.5, scikit-learn's pinball loss is half the absolute residual, so its penalized objective is
-
-$$\frac{1}{2n}\sum_i|y_i-b-z_i^\top w|+\gamma\sum_j|w_j|.$$
-
-Here $\gamma$ is an **L1** penalty parameter, distinct from ridge's L2 alpha. Its numeric values are not interchangeable with ridge's. This is a change in both loss and penalty, so the comparison cannot isolate the effect of changing only the loss. See the [QuantileRegressor documentation](https://scikit-learn.org/stable/modules/generated/sklearn.linear_model.QuantileRegressor.html).
-
-This is an **additional development check made during the final review, after seeing Section 14**. I use the original training-only expanding folds to choose among $\gamma=0,0.001,0.01,0.1$, then evaluate full and history-plus-calendar versions on the existing 2025 validation block. Each fit learns its own imputer and scaler. I also include a training-median baseline, because the median minimizes absolute error among constant predictions. All comparisons use matched targets.
-
-This check does not change Section 14's models, cutoffs or scores. Its validation scores are further development evidence, not independent confirmation after all the earlier comparisons. Even if a candidate improves them, it would need a new prospective evaluation before I could claim better future performance.
-""")
-
-code(r"""
-from sklearn.linear_model import QuantileRegressor
-
-AUDIT_MEDIAN_PENALTIES = [0., 0.001, 0.01, 0.1]
-audit_folds = cv_splits["Expanding TimeSeriesSplit"]
-audit_search_rows, audit_comparison_rows = [], []
-for name in ["History + calendar", "Full"]:
-    columns = c1_feature_sets[name]
-    best = None
-    for penalty in AUDIT_MEDIAN_PENALTIES:
-        oof = pd.Series(np.nan, index=X_train.index, dtype=float)
-        for fit, score in audit_folds:
-            fit_x, score_x = X_train.iloc[fit][columns], X_train.iloc[score][columns]
-            assert target_dates.loc[fit_x.index].max() <= score_x.index.min()
-            model = Pipeline([
-                ("imputer", SimpleImputer(strategy="median", keep_empty_features=True)),
-                ("scaler", StandardScaler()),
-                ("median", QuantileRegressor(quantile=0.5, alpha=penalty, solver="highs")),
-            ]).fit(fit_x, y_train.iloc[fit])
-            oof.iloc[score] = model.predict(score_x)
-        cv_mae = mean_absolute_error(y_train.loc[common_cv_dates], oof.loc[common_cv_dates])
-        audit_search_rows.append({"Feature set": name, "L1 penalty": penalty, "CV MAE": cv_mae})
-        if best is None or cv_mae < best["mae"]:
-            best = {"penalty": penalty, "mae": cv_mae}
-    fitted = Pipeline([
-        ("imputer", SimpleImputer(strategy="median", keep_empty_features=True)),
-        ("scaler", StandardScaler()),
-        ("median", QuantileRegressor(quantile=0.5, alpha=best["penalty"], solver="highs")),
-    ]).fit(X_train[columns], y_train)
-    prediction = fitted.predict(X_val[columns])
-    audit_comparison_rows.append({"Procedure": f"Median regression: {name}",
-        "Selected L1 penalty": best["penalty"], "Selected training CV MAE": best["mae"],
-        **regression_scores(y_val, prediction, validation_baselines["Persistence"])})
-    print(f"Development-only median regression complete: {name}", flush=True)
-
-audit_median_oof = pd.Series(np.nan, index=X_train.index, dtype=float)
-for fit, score in audit_folds:
-    audit_median_oof.iloc[score] = float(y_train.iloc[fit].median())
-audit_comparison_rows.append({"Procedure": "Training median baseline", "Selected L1 penalty": np.nan,
-    "Selected training CV MAE": mean_absolute_error(y_train.loc[common_cv_dates], audit_median_oof.loc[common_cv_dates]),
-    **regression_scores(y_val, np.full(len(y_val), y_train.median()), validation_baselines["Persistence"])})
-for name in ["Ridge", "Persistence"]:
-    scores = validation_evaluator.metrics().loc[name].to_dict()
-    audit_comparison_rows.append({"Procedure": f"Earlier validation reference: {name}",
-        "Selected L1 penalty": np.nan, "Selected training CV MAE": np.nan, **scores})
-audit_method_comparison = pd.DataFrame(audit_comparison_rows).set_index("Procedure")
-display(pd.DataFrame(audit_search_rows).round(5))
-display(audit_method_comparison.round(4))
-print("Audit experiment uses no 2026 inputs, targets, predictions or warning cutoffs.")
-""")
-
-interp("audit_method_results")
-
-md(r"""
-#### Median regression from scratch: work with the absolute values directly
-
-The comparison above uses sklearn as a reference. Here I solve the same objective myself, using the selected training-CV penalty. I implement the optimization updates with NumPy; no library regression or optimization solver is called by the scratch class.
-
-Absolute loss has a corner at zero, so the smooth ridge gradient from Section 10 does not apply everywhere. I use **ADMM**, which splits the objective into simpler pieces and repeatedly brings their answers into agreement. Let $A=[\mathbf1,Z]$, $\theta=(b,w)$ and $P=[0,I]$, so $P\theta=w$. Multiplying the median objective by $2n$ leaves its minimizer unchanged:
-
-$$\min_{\theta,r,v}\ \|r\|_1+\lambda\|v\|_1,
-\qquad A\theta+r=y,\quad P\theta=v,\quad\lambda=2n\gamma.$$
-
-The auxiliary variables have simple jobs: $r$ represents the residuals and $v$ represents the penalized slopes. The intercept is excluded by the zero column in $P$. For positive penalties $\rho_r,\rho_v$, the iterations are
-
-$$\theta^{k+1}=(\rho_r A^\top A+\rho_v P^\top P)^{-1}
-[\rho_r A^\top(y-r^k-u_r^k)+\rho_v P^\top(v^k-u_v^k)],$$
-
-$$r^{k+1}=S_{1/\rho_r}(y-A\theta^{k+1}-u_r^k),\qquad
-v^{k+1}=S_{\lambda/\rho_v}(P\theta^{k+1}+u_v^k),$$
-
-$$u_r^{k+1}=u_r^k+A\theta^{k+1}+r^{k+1}-y,\qquad
-u_v^{k+1}=u_v^k+P\theta^{k+1}-v^{k+1}.$$
-
-Here $S_c(z)=\operatorname{sign}(z)\max(|z|-c,0)$ is **soft thresholding**, applied element by element. It solves the one-variable absolute-value-plus-quadratic subproblem. For example, $S_{0.2}(0.7)=0.5$, while $S_{0.2}(0.1)=0$. The $u$ vectors are scaled dual variables: they accumulate disagreement between the linked variables. I use $\rho_r=1,\rho_v=n$ as numerical settings, not as extra statistical penalties or settings tuned on validation.
-
-I also check **how far the objective could be from its optimum**. A feasible dual vector $q$ satisfies $\mathbf1^\top q=0$, $\|q\|_\infty\leq1$, and $\|Z^\top q\|_\infty\leq\lambda$. Its value $y^\top q$ is a lower bound on the scaled primal minimum. The code centers and rescales a dual candidate to satisfy those constraints. For $\gamma=0$ it instead projects onto the null space of $A^\top$. I stop when the primal–dual gap, divided by $2n$ to restore our objective units, is at most $10^{-6}$. This tests optimization accuracy, not forecast accuracy.
-
-I compare training objectives as well as validation predictions with sklearn. With absolute loss, the optimum can have nonunique coefficients, so exact coefficient equality is not a general correctness requirement. All preprocessing for the scratch fits is calculated by the scratch transformer above. The ADMM construction follows [Boyd et al.'s tutorial](https://stanford.edu/~boyd/papers/admm_distr_stats.html); the specific updates and checks are implemented below.
-""")
-
-code(r"""
-class MedianRegressionScratch:
-    '''Median regression with L1 slopes, solved by explicit ADMM updates.'''
-    def __init__(self, penalty=0.01, tolerance=1e-6, max_iter=200000):
-        if not np.isfinite(penalty) or penalty < 0:
-            raise ValueError('penalty must be finite and nonnegative')
-        self.penalty, self.tolerance, self.max_iter = float(penalty), tolerance, max_iter
-
-    @staticmethod
-    def soft_threshold(values, threshold):
-        return np.sign(values) * np.maximum(np.abs(values)-threshold, 0.)
-
-    def fit(self, X, y):
-        X, y = np.asarray(X, dtype=float), np.asarray(y, dtype=float)
-        if X.ndim != 2 or y.shape != (len(X),) or len(y) == 0:
-            raise ValueError('Expected nonempty X (n,d) and y (n,)')
-        if not np.isfinite(X).all() or not np.isfinite(y).all():
-            raise ValueError('Supply finite preprocessed inputs and observed targets')
-        n, self.n_features_in_ = X.shape
-        A = np.column_stack([np.ones(n), X])
-        # Multiplying the whole objective by 2n preserves its minimizer.
-        lam, rho_r, rho_v = 2*n*self.penalty, 1., float(n)
-        P = np.column_stack([np.zeros(self.n_features_in_), np.eye(self.n_features_in_)])
-        system = rho_r*A.T@A + rho_v*P.T@P
-        # Cache a linear-system operator; no regression/optimization library is used.
-        inverse_system = np.linalg.solve(system, np.eye(len(system)))
-        theta = np.r_[np.median(y), np.zeros(self.n_features_in_)]
-        residual, slopes = y-A@theta, theta[1:].copy()
-        dual_r, dual_v = np.zeros(n), np.zeros(self.n_features_in_)
-        if lam == 0:
-            null_projector = np.eye(n) - A @ np.linalg.pinv(A)
-        self.history_ = []
-        for iteration in range(1, self.max_iter+1):
-            theta = inverse_system @ (rho_r*A.T@(y-residual-dual_r) + rho_v*P.T@(slopes-dual_v))
-            fitted = A@theta
-            residual = self.soft_threshold(y-fitted-dual_r, 1/rho_r)
-            slopes = self.soft_threshold(theta[1:]+dual_v, lam/rho_v)
-            dual_r += fitted + residual - y
-            dual_v += theta[1:]-slopes
-            if iteration == 1 or iteration % 25 == 0:
-                primal = np.abs(y-fitted).sum() + lam*np.abs(theta[1:]).sum()
-                v = -rho_r*dual_r
-                # Make a feasible dual vector to obtain a genuine lower bound.
-                if lam == 0:
-                    v = null_projector @ v
-                    v /= max(1., np.max(np.abs(v)))
-                else:
-                    v = v-v.mean()
-                    v /= max(1., np.max(np.abs(v)), np.max(np.abs(X.T@v))/lam)
-                dual = float(y@v)
-                gap = (primal-dual)/(2*n)
-                self.history_.append((iteration, primal/(2*n), dual/(2*n), gap))
-                if gap < -1e-8:
-                    raise RuntimeError('A dual bound exceeded the primal objective')
-                if gap <= self.tolerance:
-                    self.n_iter_, self.duality_gap_ = iteration, max(0., gap)
-                    break
-        else:
-            raise RuntimeError('Median-regression iterations did not reach the objective-gap tolerance')
-        self.intercept_, self.coef_ = float(theta[0]), theta[1:].copy()
-        self.objective_ = float((np.abs(y-self.predict(X)).mean()/2) + self.penalty*np.abs(self.coef_).sum())
-        return self
-
-    def predict(self, X):
-        X = np.asarray(X, dtype=float)
-        if not hasattr(self, 'coef_'):
-            raise ValueError('Fit before predicting')
-        if X.ndim != 2 or X.shape[1] != self.n_features_in_ or not np.isfinite(X).all():
-            raise ValueError('Prediction inputs must be finite with the fitted feature count')
-        return X@self.coef_ + self.intercept_
-
-""")
-
-code(r"""
-# A small outlier example tests the unpenalized and penalized objectives.
-median_test_X = np.arange(12,dtype=float).reshape(-1,1)
-median_test_y = 1+0.5*median_test_X[:,0]
-median_test_y[-1] += 20
-for penalty in [0.,0.01]:
-    custom = MedianRegressionScratch(penalty).fit(median_test_X,median_test_y)
-    reference = QuantileRegressor(quantile=0.5,alpha=penalty,solver="highs").fit(median_test_X,median_test_y)
-    reference_objective = np.mean(np.abs(median_test_y-reference.predict(median_test_X)))/2 + penalty*np.abs(reference.coef_).sum()
-    assert abs(custom.objective_-reference_objective) <= 2e-6
-    assert custom.duality_gap_ <= custom.tolerance
-
-median_scratch_rows = []
-median_scratch_models = {}
-for name in ["History + calendar","Full"]:
-    columns = c1_feature_sets[name]
-    candidates = pd.DataFrame(audit_search_rows).query("`Feature set` == @name")
-    penalty = float(candidates.loc[candidates["CV MAE"].idxmin(),"L1 penalty"])
-    preprocessing = MedianStandardizerScratch().fit(X_train[columns])
-    fit_z, val_z = preprocessing.transform(X_train[columns]), preprocessing.transform(X_val[columns])
-    custom = MedianRegressionScratch(penalty).fit(fit_z,y_train)
-    reference = QuantileRegressor(quantile=0.5,alpha=penalty,solver="highs").fit(fit_z,y_train)
-    reference_objective = np.abs(y_train.to_numpy()-reference.predict(fit_z)).mean()/2 + penalty*np.abs(reference.coef_).sum()
-    assert abs(custom.objective_-reference_objective) <= 2e-6
-    custom_prediction = custom.predict(val_z)
-    reference_prediction = reference.predict(val_z)
-    median_scratch_rows.append({"Feature set":name,"Updates":custom.n_iter_,
-        "Primal-dual gap":custom.duality_gap_,"Scratch objective":custom.objective_,
-        "Library objective":reference_objective,
-        "Maximum validation prediction difference":np.max(np.abs(custom_prediction-reference_prediction)),
-        "Scratch validation MAE":mean_absolute_error(y_val,custom_prediction),
-        "Library validation MAE":mean_absolute_error(y_val,reference_prediction)})
-    median_scratch_models[name]=(preprocessing,custom)
-median_scratch_comparison=pd.DataFrame(median_scratch_rows).set_index("Feature set")
-display(median_scratch_comparison)
-print("Scratch median optimizer verified; no 2026 forecasts or model choices changed.")
-""")
-
-interp("median_scratch_results")
-
-md(r"""
-### 16.6 What I would do next
-
-The most useful next step is a genuinely prospective check: freeze this pipeline, record a new period and evaluate it without changing the rules after seeing the outcomes. I would preserve the date and timing of each entry, record corrections, and document what any warning would actually be used for before choosing its cutoff. That would make the evaluation closer to the question I care about in daily life.
-
-If I later change the model, I would give that change a new development and evaluation period. More detailed measurements or a model that handles changing conditions could be worthwhile future questions, but these results do not demonstrate that either would solve the severe-day problem. I would first ask whether the added complexity produces a meaningful improvement over persistence on new data.
-
-What I take from this project is a more careful way to read my journal. Yesterday and today carry substantial information about tomorrow, but they do not make tomorrow certain. My recorded habits have not provided a consistent extra forecasting advantage in these comparisons. That is a result about this task and these measurements, not a judgment about my effort or the value of taking care of myself.
-""")
-
-md(r"""
-## 17. AI assistance, references and reproducibility
-
-### 17.1 AI assistance
-
-My journal, personal story and motivation are my own. I used Claude to translate the Arabic entries into English before merging them into the CSV. I manually checked roughly 120 days against the Arabic originals and found the translated values consistent. I checked a sample rather than every entry. The sample check and the preprocessing checks provide different evidence: the former compares translations with the originals, while the latter checks numeric representation, allowed ranges and the calendar. Neither guarantees that every entry is error-free.
-
-Claude and Codex assisted with planning, code drafting and revision, mathematical explanations, debugging, figure design and editing the written analysis. This assistance included the from-scratch implementations: “from scratch” means that the preprocessing, regression metrics, CV index construction, warning-curve counts, ridge solver, regression-tree split search, forest aggregation, median-regression optimizer and Gaussian posterior calculations are implemented directly. NumPy supplies array operations, linear algebra and random draws; pandas handles tables and dates; Matplotlib draws figures. Scikit-learn is retained for the planned library comparisons and numerical checks. It does not mean that I developed them without AI help. The library models remain visible beside the scratch implementations, as required by the comparisons in this notebook.
-
-The numerical tables and plots come from executing the code against the journal CSV. Arithmetic examples are explicitly labeled and kept separate from the observed data. AI assistance was also used to review timing, equations and consistency. The assumptions and remaining limitations are discussed in Sections 15 and 16. I am responsible for understanding the analysis and for the version I submit.
-
-### 17.2 What is implemented from scratch?
-
-| Part of the analysis | Direct implementation | Library role |
-|---|---|---|
-| Parsing, cleaning and feature construction | `DailyLogParser`, `DailyLogLoader`, `DataCleaner`, `FeatureBuilder` | pandas reads and stores the tables; Python parses specified date formats |
-| Preprocessing | `MedianStandardizerScratch` | sklearn preprocessing is the reference used by the library pipelines |
-| Baselines and regression metrics | Explicit mean/persistence/rolling rules; NumPy MAE, RMSE and $R^2$ sums | sklearn checks selected hand calculations |
-| CV indices and tuning loops | `expanding_window_splits`, `shuffled_kfold_splits`; explicit candidate/fold loops | sklearn checks the index arrays; library pipelines remain comparison models |
-| Ridge and the OLS limit | `RidgeScratch` with closed form and gradient descent; `LeastSquaresScratch` | sklearn supplies independent solver references |
-| Regression trees and forests | `RegressionTreeScratch`, `RandomForestRegressorScratch` | sklearn supplies the main library comparison and reference checks |
-| Warnings and episodes | Explicit threshold counts, precision/recall, F1 selection and calendar-run logic | sklearn checks a tied-score precision–recall example |
-| Coefficient uncertainty | Direct Gaussian posterior; calendar-block resampling with scratch preprocessing/ridge refits | NumPy supplies the linear-system operations and random draws |
-| Median regression | `MedianRegressionScratch` with explicit ADMM updates and a dual-gap check | sklearn supplies the tuning/reference comparison; the selected fits are reproduced from scratch |
-
-This is not a library-free notebook. “From scratch” here means writing the learning and evaluation calculations explicitly while using numerical and plotting tools. I retain the sklearn comparisons so the reader can check agreement, as planned from the beginning. The data-frame operations and descriptive summary/rank-correlation utilities are still provided by pandas/NumPy and their dependencies.
-
-### 17.3 Methods and documentation
-
-These sources support the methods and implementation details used here. The class chess-notebook example informed the planned presentation structure; its results are not evidence about my data.
-
-| Source | What I used it for |
-|---|---|
-| van Wieringen, W. N. (2015, revised 2026). [Lecture notes on ridge regression](https://arxiv.org/abs/1509.09169). | Ridge regularization and its connection to Gaussian-prior regression, Sections 7, 10 and 15. |
-| Boyd, S., Parikh, N., Chu, E., Peleato, B., and Eckstein, J. (2011). [Distributed Optimization and Statistical Learning via the Alternating Direction Method of Multipliers](https://stanford.edu/~boyd/papers/admm_distr_stats.html). *Foundations and Trends in Machine Learning*, 3(1), 1–122. | ADMM and soft-thresholding background for the scratch median optimizer in Section 16.5. |
-| Breiman, L. (2001). [Random Forests](https://www.stat.berkeley.edu/~breiman/randomforest2001.pdf). *Machine Learning*, 45, 5–32. | Bootstrap aggregation and randomized feature selection; regression-tree/forest explanation in Section 13. |
-| Politis, D. N. (2003). [The impact of bootstrap methods on time series analysis](https://mathweb.ucsd.edu/~politis/impactBOOT.pdf). *Statistical Science*, 18(2), 219–230. | Why dependent observations call for time-series resampling and why block assumptions matter in Section 15. |
-| pandas documentation: [to_datetime](https://pandas.pydata.org/docs/reference/api/pandas.to_datetime.html). | Explicit date parsing and the mixed-format demonstration in Section 4. |
-| NumPy documentation: [linalg.solve](https://numpy.org/doc/2.4/reference/generated/numpy.linalg.solve.html). | Solving the linear systems in the scratch ridge and posterior calculations. |
-| scikit-learn documentation: [Ridge](https://scikit-learn.org/stable/modules/generated/sklearn.linear_model.Ridge.html), [Pipeline](https://scikit-learn.org/stable/modules/generated/sklearn.pipeline.Pipeline.html), [SimpleImputer](https://scikit-learn.org/stable/modules/generated/sklearn.impute.SimpleImputer.html), [StandardScaler](https://scikit-learn.org/stable/modules/generated/sklearn.preprocessing.StandardScaler.html). | Objective normalization and training-fitted preprocessing, Sections 7–12. |
-| scikit-learn documentation: [TimeSeriesSplit](https://scikit-learn.org/stable/modules/generated/sklearn.model_selection.TimeSeriesSplit.html). | Expanding folds and the equal-spacing qualification, Sections 8–13. Calendar gaps are retained and fold spans are audited explicitly. |
-| scikit-learn documentation: [RandomForestRegressor](https://scikit-learn.org/stable/modules/generated/sklearn.ensemble.RandomForestRegressor.html), [DecisionTreeRegressor](https://scikit-learn.org/stable/modules/generated/sklearn.tree.DecisionTreeRegressor.html). | Squared-error trees, bootstrap sampling, feature subsets and OOB diagnostics, Section 13. |
-| scikit-learn documentation: [precision_recall_curve](https://scikit-learn.org/stable/modules/generated/sklearn.metrics.precision_recall_curve.html). | Threshold alignment and the extra curve endpoint, Section 14. |
-| scikit-learn documentation: [QuantileRegressor](https://scikit-learn.org/stable/modules/generated/sklearn.linear_model.QuantileRegressor.html). | Conditional-median regression, pinball loss and L1 penalty in the additional development check, Section 16.5. |
-
-Documentation was checked during the submission review on **17 October 2026**. The package versions below identify the environment used for the executed results; live documentation pages may later change.
-
-### 17.4 Reproducing the notebook
-
-Run the notebook from the `anxiety_pipeline` directory with the adjacent `requirements.txt` installed, then restart the kernel and run all cells in order. The review used **Python 3.11.9, NumPy 2.4.6, pandas 3.0.6, scikit-learn 1.9.1, SciPy 1.17.1 and Matplotlib 3.11.2**. Randomized experiments have explicit seeds; tiny floating-point differences may occur on another system.
-
-`anxiety_pipeline.ipynb` is the submission notebook, including executed outputs. `build_notebook.py` stores its cell definitions and `interpretations.py` stores the result commentary. Running the generator recreates the notebook source and clears execution outputs, so it must be followed by a full notebook execution. The raw CSV is the input; `data/processed/anxiety_clean.csv` is regenerated by Section 4.
-
-The final review ran the notebook in a fresh kernel and checked the split counts, label availability, scratch implementations, coefficient-posterior identity and final score consistency. The extra median-regression experiment uses pre-2026 development data only. It is disclosed as a later development check and does not replace the previously fixed final comparison.
+For my journal, the main finding is that these habit features did not improve this ridge model beyond recent anxiety and calendar information in the comparisons above. That does not tell me whether changing my habits would change my anxiety. A useful next step would be to fix the modelling choices and evaluate them on newly recorded days.
 """)
 
 nb = nbf.v4.new_notebook()
 nb["cells"] = cells
 nb["metadata"] = {
-    "kernelspec": {"name": "cs156-ml", "display_name": "Python 3.11 (cs156-ml .venv)", "language": "python"},
+    "kernelspec": {"name": "cs156-ml", "display_name": "Python 3.11 (personal analysis)", "language": "python"},
     "language_info": {"name": "python"},
 }
 nbf.write(nb, NOTEBOOK)

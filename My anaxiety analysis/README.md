@@ -1,6 +1,5 @@
-# My anaxiety analysis
-
-This folder contains a copy of my CS156 machine-learning assignment on forecasting tomorrow’s anxiety from my daily journal. The original project remains in my CS156-Machine-Learning repository.
+# My own anaxiety analysis
+This part of my project started with something I was already doing for myself. For more than three years, I kept a journal in Arabic as part of my healing and therapy journey. My therapist had encouraged me to pay attention to my lifestyle and how it might relate to my anxiety, so I recorded things like whether I felt I had slept enough, how well I slept, whether I exercised, whether I spent time with people in person, and how anxious I felt. But having all those entries didn’t mean I understood the patterns. I wanted to I wanted to answer one main question: can my daily habits help predict tomorrow’s anxiety, or does knowing how anxious I’ve been recently already tell me most of what I need to know? I started by looking at how my anxiety changed over time do high-anxiety days tend to follow one another? How are getting enough sleep, sleeping well, exercising, and socializing in person related to my anxiety that day and the next? Then I tested ridge regression and random forest to ask can these models predict tomorrow’s anxiety better than simply guessing it will be the same as today’s? Does adding my lifestyle habits improve predictions compared with using only my anxiety history? And if I remove sleep, exercise, or socializing, do the predictions get worse? I also explored how far back the models needed to look: is the last day enough, or do the last 3, 7, or 14 days help more? Is predicting anxiety three days ahead harder than predicting tomorrow? Ialso looked at where the models struggled: how often did they correctly identify a high-anxiety day, how often did they miss one, and how often did they predict high anxiety when it didn’t happen?
 
 ## Files
 
@@ -22,4 +21,4 @@ Open `anxiety_pipeline.ipynb` in a Jupyter-compatible notebook editor, select th
 
 Running `build_notebook.py` recreates the notebook source and clears execution outputs; execute the notebook afterward to restore them. The saved notebook can be read without rebuilding it.
 
-This is a separate copy. Changes here and changes in the original repository do not automatically synchronize.
+

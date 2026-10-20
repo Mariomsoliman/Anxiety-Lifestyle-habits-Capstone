@@ -1910,7 +1910,7 @@ excluded_dates = plot_calendar.difference(plot_targets)
 assert clean["anxiety_level"].reindex(excluded_dates).isna().all()
 assert len(plot_calendar) == len(X_train) + len(excluded_dates)
 
-# Merge only adjacent calendar cells with identical assignments. This removes
+# Merge only adjacent calendar cells with identical fold memberships. This removes
 # drawing seams without aggregating dates or changing any fold membership.
 def calendar_runs(states, selected_state):
     boundaries = np.r_[0, np.flatnonzero(np.diff(states) != 0) + 1, len(states)]
@@ -1973,7 +1973,7 @@ fig.text(0.02, 0.045,
          f"Hatched gaps: {len(excluded_dates)} missing target ratings — {excluded_label}.",
          fontsize=9.5, color=INK_2)
 fig.text(0.02, 0.018,
-         "Gray denotes eligible dates unused by that fold. All daily assignments are preserved; no targets are filled.",
+         "Gray denotes eligible dates unused by that fold. All daily fold memberships are preserved; no targets are filled.",
          fontsize=9.5, color=INK_2)
 fig.subplots_adjust(left=0.21, right=0.985, top=0.94, bottom=0.23, hspace=0.35)
 plt.show()
@@ -3138,7 +3138,7 @@ For my journal, the main finding is that these habit features did not improve th
 nb = nbf.v4.new_notebook()
 nb["cells"] = cells
 nb["metadata"] = {
-    "kernelspec": {"name": "cs156-ml", "display_name": "Python 3.11 (personal analysis)", "language": "python"},
+    "kernelspec": {"name": "anxiety-analysis", "display_name": "Python 3.11 (personal analysis)", "language": "python"},
     "language_info": {"name": "python"},
 }
 nbf.write(nb, NOTEBOOK)
